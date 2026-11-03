@@ -597,3 +597,91 @@ body.pl-embed .pl-graph-layout {
 	font-size: 11px;
 	padding: 0 4px;
 }
+
+/* 分段按钮（推理强度等）：不依赖原生 select 弹层 */
+.pl-seg {
+	display: inline-flex;
+	border: 1px solid var(--pl-border);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.pl-seg button {
+	border: 0;
+	border-radius: 0;
+	padding: 4px 10px;
+	background: var(--pl-bg);
+	color: var(--pl-text);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.pl-seg button + button {
+	border-left: 1px solid var(--pl-border);
+}
+
+.pl-seg button:hover {
+	background: var(--pl-panel);
+}
+
+.pl-seg button.active {
+	background: var(--pl-accent);
+	color: #fff;
+}
+
+/* ---------------------------------------------------------- 报告式答案排版 */
+
+.pl-md-h1 { font-size: 16px; font-weight: 700; margin: 12px 0 6px; }
+.pl-md-h2 { font-size: 15px; font-weight: 700; margin: 10px 0 5px; }
+.pl-md-h3 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
+.pl-md-h4 { font-size: 13px; font-weight: 600; margin: 6px 0 3px; }
+
+.pl-md-p { margin: 4px 0 6px; line-height: 1.7; }
+
+.pl-md-list { margin: 4px 0 8px; padding-left: 18px; }
+.pl-md-list li { margin: 2px 0; line-height: 1.65; }
+
+/* 模型输出的 > 引用块 */
+.pl-md-quote {
+	margin: 6px 0;
+	padding: 6px 10px;
+	border-left: 3px solid var(--pl-accent);
+	background: var(--pl-panel);
+	color: var(--pl-text-dim);
+	font-size: 12px;
+}
+
+/* 行内代码 / 引用上标 */
+.pl-msg code {
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 0.92em;
+	padding: 0 3px;
+	border-radius: 3px;
+	background: var(--pl-accent-soft);
+}
+
+.pl-cite-mark {
+	color: var(--pl-accent);
+	cursor: pointer;
+	font-size: 0.72em;
+	margin-left: 2px;
+}
+
+.pl-cite-mark.pl-cite-invalid { color: var(--pl-danger); }
+
+/* 段落后面的脚注行 —— 引用不再塞进正文 */
+.pl-footnotes {
+	margin: 4px 0 10px;
+	padding-left: 6px;
+	border-left: 2px solid var(--pl-border);
+}
+
+.pl-footnote {
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--pl-text-dim);
+	margin: 2px 0;
+	cursor: pointer;
+}
+
+.pl-footnote:hover { color: var(--pl-accent); }

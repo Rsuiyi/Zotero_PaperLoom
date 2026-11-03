@@ -360,46 +360,10 @@
 		wrap.appendChild(detail);
 
 		// 引用清单
+		// 引用已按段落生成脚注（见 renderAnswerBody）；
+		// 只有模型完全没给引用时，才退回"本轮证据"列表。
 		const cites = result.citations || [];
-		if (cites.length) {
-			const list = document.createElement("div");
-			list.className = "pl-msg-meta";
-			list.appendChild(document.createTextNode("引用："));
-			cites.forEach((c, i) => list.appendChild(makeCiteChip(c, i + 1, result.titles || {})));
-			wrap.appendChild(list);
-
-			// 原文摘录：每条引用都能直接展开看原句，而不是只有页码
-			const quotes = document.createElement("div");
-			quotes.className = "pl-cite-quotes";
-			for (const c of cites) {
-				if (!c.quote) continue;
-				const item = document.createElement("div");
-				item.className = "pl-cite-quote";
-
-				const head = document.createElement("button");
-				head.type = "button";
-				head.className = "pl-cite-quote-head";
-				head.textContent = "原文 · p." + (c.page || "?") + " · "
-					+ String(c.title || (result.titles || {})[c.paperId] || c.paperId).slice(0, 28);
-
-				const body = document.createElement("div");
-				body.className = "pl-cite-quote-body";
-				body.textContent = "“" + c.quote + "”";
-				body.style.display = "none";
-
-				head.addEventListener("click", () => {
-					body.style.display = body.style.display === "none" ? "block" : "none";
-				});
-				head.addEventListener("dblclick", () => jumpTo(c.paperId, c.page, c.quote));
-
-				item.appendChild(head);
-				item.appendChild(body);
-				quotes.appendChild(item);
-			}
-			if (quotes.childNodes.length) wrap.appendChild(quotes);
-		}
-		else {
-			// 模型没给出可定位引用时，也要能看到"这轮到底用了哪些原文"
+		if (!cites.length) {
 			const sources = result.sources || [];
 			if (sources.length) {
 				const head = document.createElement("div");
@@ -408,26 +372,15 @@
 				wrap.appendChild(head);
 
 				const box = document.createElement("div");
-				box.className = "pl-cite-quotes";
+				box.className = "pl-footnotes";
 				for (const s of sources) {
-					const item = document.createElement("div");
-					item.className = "pl-cite-quote";
-
-					const h = document.createElement("button");
-					h.type = "button";
-					h.className = "pl-cite-quote-head";
-					h.textContent = "p." + (s.page || "?") + " · "
-						+ String(s.title || s.paperId).slice(0, 28)
-						+ "（点击跳到原文）";
-					h.addEventListener("click", () => jumpTo(s.paperId, s.page, s.quote));
-
-					const body = document.createElement("div");
-					body.className = "pl-cite-quote-body";
-					body.textContent = "“" + s.quote + "”";
-
-					item.appendChild(h);
-					item.appendChild(body);
-					box.appendChild(item);
+					const line = document.createElement("div");
+					line.className = "pl-footnote";
+					line.textContent = "p." + (s.page || "?") + " · "
+						+ (s.title || s.paperId) + " — “" + String(s.quote || "").slice(0, 120) + "”";
+					line.title = "点击打开原文并高亮这句话";
+					line.addEventListener("click", () => jumpTo(s.paperId, s.page, s.quote));
+					box.appendChild(line);
 				}
 				wrap.appendChild(box);
 			}
@@ -459,19 +412,37 @@
 
 	const EFFORT_PREF = "extensions.paperloom.reasoningEffort";
 
+	// 不用原生 select：chrome iframe 里弹层经常点不开，改成点击循环切换
+	const EFFORT_LEVELS = [
+		{ value: "", label: "自动" },
+		{ value: "low", label: "低" },
+		{ value: "high", label: "高" },
+		{ value: "max", label: "最大" }
+	];
+
+	function readEffort() {
+		try { return String(Zotero.Prefs.get(EFFORT_PREF, true) || ""); }
+		catch (e) { return ""; }
+	}
+
 	function initEffort() {
-		const sel = $("pl-effort");
-		if (!sel) return;
+		const btn = $("pl-effort");
+		if (!btn) return;
 
-		try {
-			sel.value = String(Zotero.Prefs.get(EFFORT_PREF, true) || "");
-		}
-		catch (e) { /* ignore */ }
+		const render = () => {
+			const cur = readEffort();
+			const item = EFFORT_LEVELS.find(x => x.value === cur) || EFFORT_LEVELS[0];
+			btn.textContent = "强度：" + item.label;
+		};
 
-		sel.addEventListener("change", () => {
-			try { Zotero.Prefs.set(EFFORT_PREF, sel.value, true); } catch (e) { /* ignore */ }
-			const label = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : "自动";
-			if (els.status) els.status.textContent = "推理强度：" + label;
+		render();
+		btn.addEventListener("click", () => {
+			const cur = readEffort();
+			const idx = Math.max(0, EFFORT_LEVELS.findIndex(x => x.value === cur));
+			const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length];
+			try { Zotero.Prefs.set(EFFORT_PREF, next.value, true); } catch (e) { /* ignore */ }
+			render();
+			if (els.status) els.status.textContent = "推理强度：" + next.label;
 		});
 	}
 
@@ -498,57 +469,109 @@
 	 */
 	function renderAnswerBody(container, text, citations, titles) {
 		const lines = String(text || "").split("\n");
+		const citeIndex = new Map();   // key -> { num, citation }
+		let number = 0;
 		let list = null;
 
-		const flushList = () => { list = null; };
+		const keyOf = (c) => (c.chunkId || "") + "|" + c.paperId + "|" + c.page;
+
+		const registerCitation = (matched, paperId, page) => {
+			const c = matched || {
+				paperId: paperId, page: page, valid: false,
+				errors: ["引用未出现在 citations 中"]
+			};
+			const key = keyOf(c);
+			if (!citeIndex.has(key)) {
+				number += 1;
+				citeIndex.set(key, { num: number, citation: c });
+			}
+			return citeIndex.get(key);
+		};
+
+		// 报告式脚注：引用不塞在句子里，而是在这一段下面单独一行
+		const appendFootnotes = (usedKeys) => {
+			if (!usedKeys.length) return;
+			const box = document.createElement("div");
+			box.className = "pl-footnotes";
+
+			for (const key of usedKeys) {
+				const entry = citeIndex.get(key);
+				if (!entry) continue;
+				const c = entry.citation;
+
+				const line = document.createElement("div");
+				line.className = "pl-footnote";
+				line.textContent = "[" + entry.num + "]"
+					+ (c.page ? " p." + c.page : "")
+					+ " · " + (c.title || (titles && titles[c.paperId]) || c.paperId)
+					+ (c.quote ? " — “" + String(c.quote).slice(0, 120) + "”" : "");
+				line.title = "点击打开原文并高亮这句话";
+				line.addEventListener("click", () => jumpTo(c.paperId, c.page, c.quote));
+				box.appendChild(line);
+			}
+			container.appendChild(box);
+		};
 
 		for (const raw of lines) {
 			const line = raw.replace(/\s+$/, "");
+			if (!line.trim()) { list = null; continue; }
 
-			if (!line.trim()) { flushList(); continue; }
+			const used = [];
 
 			// 标题
 			const h = line.match(/^(#{1,4})\s+(.*)$/);
 			if (h) {
-				flushList();
+				list = null;
 				const el = document.createElement("div");
-				el.className = "pl-md-h";
-				el.style.fontSize = (14 - h[1].length) + "px";
-				el.style.fontWeight = "600";
-				el.style.margin = "6px 0 2px";
-				renderInline(el, h[2], citations, titles);
+				el.className = "pl-md-h pl-md-h" + h[1].length;
+				renderInline(el, h[2], citations, titles, used, registerCitation, keyOf);
 				container.appendChild(el);
+				appendFootnotes(used);
 				continue;
 			}
 
-			// 列表项（有序 / 无序）
+			// 引用块
+			const quote = line.match(/^>\s?(.*)$/);
+			if (quote) {
+				list = null;
+				const el = document.createElement("blockquote");
+				el.className = "pl-md-quote";
+				renderInline(el, quote[1], citations, titles, used, registerCitation, keyOf);
+				container.appendChild(el);
+				appendFootnotes(used);
+				continue;
+			}
+
+			// 列表项
 			const li = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.*)$/);
 			if (li) {
 				if (!list) {
 					list = document.createElement("ul");
 					list.className = "pl-md-list";
-					list.style.margin = "3px 0";
-					list.style.paddingLeft = "18px";
 					container.appendChild(list);
 				}
 				const item = document.createElement("li");
-				renderInline(item, li[1], citations, titles);
+				renderInline(item, li[1], citations, titles, used, registerCitation, keyOf);
 				list.appendChild(item);
+				appendFootnotes(used);
 				continue;
 			}
 
 			// 普通段落
-			flushList();
+			list = null;
 			const p = document.createElement("div");
-			p.style.margin = "2px 0";
-			renderInline(p, line, citations, titles);
+			p.className = "pl-md-p";
+			renderInline(p, line, citations, titles, used, registerCitation, keyOf);
 			container.appendChild(p);
+			appendFootnotes(used);
 		}
 	}
 
-	/** 行内：**粗体** / `代码` / [PID:xxx, p.3] 引用 chip */
-	function renderInline(container, text, citations, titles) {
-		// 统一的分词正则：引用 > 代码 > 粗体
+	/**
+	 * 行内：**粗体** / `代码` / [PID, p.3] 引用。
+	 * 引用渲染成上标编号，并把对应脚注记到 used 里，由调用方在该段落后输出。
+	 */
+	function renderInline(container, text, citations, titles, used, registerCitation, keyOf) {
 		const re = /\[(?:PID:)?\s*([A-Za-z0-9_-]+)\s*,?\s*p\.?\s*(\d+)\s*\]|`([^`]+)`|\*\*([^*]+)\*\*/g;
 		let last = 0;
 		let m;
@@ -559,24 +582,26 @@
 			}
 
 			if (m[1] !== undefined) {
-				// 引用 chip
 				const paperId = m[1];
 				const page = parseInt(m[2], 10);
 				const matched = citations.find(c => c.paperId === paperId && Number(c.page) === page)
 					|| citations.find(c => c.paperId === paperId);
-				container.appendChild(makeCiteChip(
-					matched || { paperId, page, valid: false, errors: ["引用未出现在 citations 中"] },
-					null, titles, { inline: true, page }
+
+				const entry = registerCitation(matched, paperId, page);
+				used.push(keyOf(entry.citation));
+
+				const sup = document.createElement("sup");
+				sup.className = "pl-cite-mark" + (entry.citation.valid === false ? " pl-cite-invalid" : "");
+				sup.textContent = "[" + entry.num + "]";
+				sup.title = "点击打开原文并高亮这句话";
+				sup.addEventListener("click", () => jumpTo(
+					entry.citation.paperId, entry.citation.page, entry.citation.quote
 				));
+				container.appendChild(sup);
 			}
 			else if (m[3] !== undefined) {
 				const code = document.createElement("code");
 				code.textContent = m[3];
-				code.style.fontFamily = "ui-monospace, Menlo, monospace";
-				code.style.fontSize = "11px";
-				code.style.padding = "0 3px";
-				code.style.borderRadius = "3px";
-				code.style.background = "var(--pl-accent-soft)";
 				container.appendChild(code);
 			}
 			else if (m[4] !== undefined) {
@@ -619,10 +644,44 @@
 	 * 首选 Zotero.Reader.open(attachmentID, location)，失败退回 zotero://open-pdf URI
 	 * （后者是官方支持的格式，比私有 API 稳）。
 	 */
+	/**
+	 * 决定"跳到哪一份 PDF"。
+	 * 同一篇论文可能同时有原版和翻译版，必须优先用用户当前实际打开的/选中的那份，
+	 * 否则点引用会莫名跳到原版。
+	 */
+	async function resolveOpenAttachment(paperId) {
+		const doc = await PL.Storage.readPaperDoc(paperId);
+		const fallback = doc && doc.attachmentId;
+
+		try {
+			// 1) 已经打开的 reader 里，属于这篇论文的（翻译版通常就在这）
+			const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+			for (const r of readers) {
+				if (!r.itemID) continue;
+				const att = Zotero.Items.get(r.itemID);
+				if (!att || !att.parentItemID) continue;
+				const parent = Zotero.Items.get(att.parentItemID);
+				if (parent && parent.key === paperId) return r.itemID;
+			}
+
+			// 2) 文献列表里当前选中的附件
+			const pane = Zotero.getActiveZoteroPane();
+			const selected = (pane && pane.getSelectedItems()) || [];
+			for (const it of selected) {
+				if (it.isAttachment && it.isAttachment() && it.parentItemID) {
+					const parent = Zotero.Items.get(it.parentItemID);
+					if (parent && parent.key === paperId) return it.id;
+				}
+			}
+		}
+		catch (e) { /* 保持 fallback */ }
+
+		return fallback;
+	}
+
 	async function jumpTo(paperId, page, quote) {
 		try {
-			const doc = await PL.Storage.readPaperDoc(paperId);
-			const attachmentId = doc && doc.attachmentId;
+			const attachmentId = await resolveOpenAttachment(paperId);
 
 			if (attachmentId && Zotero.Reader && Zotero.Reader.open) {
 				try {

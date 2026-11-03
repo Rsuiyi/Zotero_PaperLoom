@@ -161,18 +161,20 @@
 		</div>
 
 		<div class="row">
-			<label for="reasoningEffort">推理强度</label>
-			<select id="reasoningEffort">
-				<option value="">自动（不发送该参数）</option>
-				<option value="low">低（low）</option>
-				<option value="high">高（high）</option>
-				<option value="max">最大（max）</option>
-			</select>
+			<label>推理强度</label>
+			<!-- 不用原生 <select>：chrome iframe 里原生下拉弹层经常点不开，
+			     改成一组按钮，点哪个生效哪个，没有弹层 -->
+			<div class="pl-seg" id="effort-seg">
+				<button type="button" data-effort="">自动</button>
+				<button type="button" data-effort="low">低</button>
+				<button type="button" data-effort="high">高</button>
+				<button type="button" data-effort="max">最大</button>
+			</div>
+			<span class="unit" id="effort-hint">自动 = 不发送推理参数</span>
 		</div>
 		<div class="desc">
 			档位对齐 DeepSeek V4 的 <code>low / high / max</code>。DeepSeek 推理模型会同时发送
-			<code>thinking:{type:"enabled"}</code>；其他 OpenAI 兼容服务只发 <code>reasoning_effort</code>。
-			不支持该参数的服务商会返回 400，切回「自动」即可。
+			<code>thinking:{type:"enabled"}</code>；不支持该参数的服务商会自动降级并提示。
 		</div>
 	</section>
 

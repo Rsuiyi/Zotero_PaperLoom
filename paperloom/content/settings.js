@@ -75,6 +75,35 @@
 		catch (e) { /* 记不下来也不影响当前界面 */ }
 	}
 
+	// ------------------------------------------------------------------ 推理强度（分段按钮）
+
+	function renderEffortSeg() {
+		const seg = $("effort-seg");
+		if (!seg) return;
+		const current = String(prefGet("reasoningEffort", ""));
+
+		for (const btn of seg.querySelectorAll("button[data-effort]")) {
+			btn.classList.toggle("active", (btn.getAttribute("data-effort") || "") === current);
+		}
+		const hint = $("effort-hint");
+		if (hint) hint.textContent = current ? ("当前：" + current) : "自动 = 不发送推理参数";
+	}
+
+	function bindEffortSeg() {
+		const seg = $("effort-seg");
+		if (!seg) return;
+
+		// 点哪个立刻生效并落盘，不需要再点保存
+		seg.addEventListener("click", (ev) => {
+			const btn = ev.target.closest ? ev.target.closest("button[data-effort]") : null;
+			if (!btn) return;
+			const value = btn.getAttribute("data-effort") || "";
+			prefSet("reasoningEffort", value);
+			renderEffortSeg();
+			setStatus("推理强度已设为：" + (btn.textContent || "自动"), "ok");
+		});
+	}
+
 	// ------------------------------------------------------------------ 通用参数
 
 	function loadParams() {
@@ -85,7 +114,7 @@
 		$("dataDir").value = String(prefGet("dataDir", ""));
 		$("systemPrompt").value = String(prefGet("systemPrompt", ""));
 		$("fontSize").value = String(prefGet("fontSize", 13));
-		$("reasoningEffort").value = String(prefGet("reasoningEffort", ""));
+		renderEffortSeg();
 
 		try {
 			$("resolvedDir").textContent = PL ? PL.Storage.root() : "—";
@@ -111,8 +140,6 @@
 
 		const font = parseInt($("fontSize").value, 10);
 		if (Number.isFinite(font)) prefSet("fontSize", Math.max(10, Math.min(22, font)));
-
-		prefSet("reasoningEffort", String($("reasoningEffort").value || ""));
 
 		setStatus("已保存", "ok");
 	}
@@ -343,6 +370,7 @@
 		loadParams();
 		renderProviders();
 		renderModelSelects();
+		bindEffortSeg();
 
 		$("btn-add-provider").addEventListener("click", () => openProviderDialog(""));
 		$("btn-test").addEventListener("click", testSelected);
