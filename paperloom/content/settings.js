@@ -264,6 +264,29 @@
 		}
 	}
 
+	// ------------------------------------------------------------------ 内嵌高度
+
+	/**
+	 * 内嵌到 Zotero 设置面板时，让 iframe 高度贴合父窗口可用空间。
+	 * 否则 iframe 固定 620px、父面板又要滚动，就会出现"里面一个滑条、外面一个滑条"。
+	 * 目标：外层不滚动，只保留 iframe 内部的滚动条。
+	 */
+	function fitToParent() {
+		if (!EMBED) return;
+		try {
+			const frame = window.frameElement;
+			if (!frame || !window.parent) return;
+
+			const rect = frame.getBoundingClientRect();
+			// 父窗口视口高度 - iframe 顶部位置 - 底部余量（留大一点，宁可内部多点滚动）
+			const available = window.parent.innerHeight - rect.top - 40;
+			if (!Number.isFinite(available)) return;
+
+			frame.style.height = Math.max(360, Math.floor(available)) + "px";
+		}
+		catch (e) { /* 跨域或拿不到 frameElement 时保持默认高度 */ }
+	}
+
 	// ------------------------------------------------------------------ 初始化
 
 	function init() {
@@ -280,6 +303,14 @@
 			document.body.classList.add("pl-embed");
 			const close = $("btn-close");
 			if (close) close.style.display = "none";
+
+			// 布局稳定后再量高度；窗口尺寸变化时重算
+			setTimeout(fitToParent, 0);
+			setTimeout(fitToParent, 300);
+			try {
+				window.parent.addEventListener("resize", fitToParent);
+			}
+			catch (e) { /* 跨域时忽略 */ }
 		}
 
 		if (!Zotero) {
