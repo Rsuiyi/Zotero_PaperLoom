@@ -11,16 +11,46 @@
 
 	const EMBED = new URLSearchParams(location.search).get("embed") === "1";
 
-	// 三种打开方式都要能拿到 Zotero：
-	//   1. openDialog 传参（独立窗口）
-	//   2. 主窗口 iframe（设置面板内嵌 / Tab 兜底）
-	//   3. opener（同源 chrome 窗口）
-	const arg = (window.arguments && window.arguments[0]) || {};
-	const Zotero = arg.Zotero
-		|| (window.top && window.top.Zotero)
-		|| (window.parent && window.parent.Zotero)
-		|| (window.opener && window.opener.Zotero);
-	const PL = arg.PaperLoom || (Zotero && Zotero.PaperLoom);
+	/**
+	 * 安全地找 Zotero 对象。
+	 * 每一条候选都单独 try/catch：跨域访问会抛 SecurityError，
+	 * 一条抛错不能把整个脚本炸掉（那会表现成"按钮完全没反应"）。
+	 */
+	function pickZotero() {
+		const candidates = [
+			() => (window.arguments && window.arguments[0] && window.arguments[0].Zotero),
+			() => (window.top && window.top.Zotero),
+			() => (window.parent && window.parent.Zotero),
+			() => (window.opener && window.opener.Zotero),
+			() => window.Zotero
+		];
+		for (const get of candidates) {
+			try {
+				const v = get();
+				if (v) return v;
+			}
+			catch (e) { /* 换下一条 */ }
+		}
+		return null;
+	}
+
+	function pickPaperLoom(z) {
+		const candidates = [
+			() => (window.arguments && window.arguments[0] && window.arguments[0].PaperLoom),
+			() => (z && z.PaperLoom)
+		];
+		for (const get of candidates) {
+			try {
+				const v = get();
+				if (v) return v;
+			}
+			catch (e) { /* 换下一条 */ }
+		}
+		return null;
+	}
+
+	const Zotero = pickZotero();
+	const PL = pickPaperLoom(Zotero);
 
 	// 偏好键统一带前缀，和 prefs.js 保持一致
 	const PREFIX = "extensions.paperloom.";
@@ -235,6 +265,16 @@
 	}
 
 	function init() {
+		// 任何一步抛错都必须显示在页面上，不能让它静默变成"按钮没反应"
+		try {
+			initSafe();
+		}
+		catch (e) {
+			setStatus("设置界面初始化失败：" + ((e && e.message) || e), "err");
+		}
+	}
+
+	function initSafe() {
 		if (EMBED) {
 			document.body.classList.add("pl-embed");
 			const close = $("btn-close");
@@ -242,6 +282,11 @@
 		}
 
 		load();
+
+		if (!Zotero) {
+			setStatus("拿不到 Zotero 对象：请把本页当作独立窗口打开（工具 → PaperLoom → 设置…）", "err");
+			return;
+		}
 
 		$("btn-save").addEventListener("click", save);
 		$("btn-test").addEventListener("click", test);

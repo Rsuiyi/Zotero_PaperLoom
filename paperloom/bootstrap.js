@@ -92,6 +92,15 @@ async function startup({ id, version, rootURI }) {
 			addToWindow(win);
 		}
 
+		// 诊断自检：启动后跑一次模型列表，把结果写到数据目录。
+		// 目的不是功能，而是让"拉不到模型"能留下可读的证据，而不是只能靠猜。
+		try {
+			if (Zotero.Prefs.get("extensions.paperloom.selfTest", true) !== false) {
+				setTimeout(runModelSelfTest, 5000);
+			}
+		}
+		catch (e) { /* 偏好未定义也不影响主流程 */ }
+
 		log("startup 完成 v" + version);
 	}
 	catch (e) {
@@ -99,6 +108,47 @@ async function startup({ id, version, rootURI }) {
 		Zotero.logError(e);
 		log("startup 失败: " + e + "\n" + (e.stack || ""));
 	}
+}
+
+/**
+ * 模型接口自检。
+ * 把「用的什么地址、Key 多长、试了哪些 URL、每个 URL 的结果、最终返回什么」
+ * 全部落到 <数据目录>/paperloom/selftest.json，便于在没有控制台的机器上定位。
+ */
+async function runModelSelfTest() {
+	const out = { at: new Date().toISOString() };
+	try {
+		if (!PaperLoom || !PaperLoom.LLM) {
+			throw new Error("领域层未加载（PaperLoom.LLM 不可用）");
+		}
+		const cfg = PaperLoom.LLM.config();
+		out.baseURL = cfg.baseURL;
+		out.keyLength = String(cfg.apiKey || "").length;
+		if (!cfg.apiKey) {
+			throw new Error("未配置 API Key");
+		}
+
+		const models = await PaperLoom.LLM.listModels();
+		out.source = models.source || "unknown";
+		out.count = models.length;
+		out.models = Array.prototype.slice.call(models, 0, 50);
+		out.error = models.error || null;
+		out.tried = models.tried || null;
+		out.ok = out.source === "api";
+	}
+	catch (e) {
+		out.ok = false;
+		out.error = String((e && e.message) || e);
+		out.stack = e && e.stack ? String(e.stack).split("\n").slice(0, 6) : null;
+	}
+
+	try {
+		await PaperLoom.Storage.writeJSON("selftest.json", out);
+	}
+	catch (e) {
+		Zotero.debug("[PaperLoom] 自检结果写入失败: " + e);
+	}
+	Zotero.debug("[PaperLoom] 模型自检: " + JSON.stringify(out));
 }
 
 function shutdown() {

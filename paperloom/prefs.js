@@ -16,6 +16,10 @@ pref("extensions.paperloom.timeoutMs", 90000);
 // 所有 LLM 结果按 hash(prompt) 落盘缓存，开发期反复调试不烧钱
 pref("extensions.paperloom.useCache", true);
 
+// ---- 诊断：启动后自动跑一次模型列表请求，结果写入 <数据目录>/paperloom/selftest.json
+//      稳定后可以关掉；排查"拉不到模型"时它是最直接的证据
+pref("extensions.paperloom.selfTest", true);
+
 // ---- 存储：留空则使用 <Zotero 数据目录>/paperloom
 pref("extensions.paperloom.dataDir", "");
 
