@@ -1,11 +1,12 @@
 <groupbox>
 	<label><html:h2>PaperLoom</html:h2></label>
-	<description>大模型接口、模型名、API Key、max_tokens 等都在独立设置窗口中配置。</description>
-	<description>集中到独立窗口只有一份实现，避免不同 Zotero 版本对偏好类型处理不一致。</description>
 
-	<hbox align="center" style="margin-top: 10px;">
-		<button id="paperloom-open-settings" label="打开 PaperLoom 设置" />
-	</hbox>
+	<!-- 直接把设置界面嵌进来：点进 PaperLoom 就能改，不用再点一次按钮。
+	     内嵌页与独立窗口是同一份实现（settings.xhtml?embed=1）。 -->
+	<html:iframe src="chrome://paperloom/content/settings.xhtml?embed=1"
+		style="width:100%;height:620px;border:0;display:block;"></html:iframe>
 
-	<description id="paperloom-pref-status">正在读取配置状态…</description>
+	<description style="margin-top: 6px; opacity: 0.7;">
+		若上方区域空白，可用「工具 → PaperLoom → 设置…」打开独立设置窗口。
+	</description>
 </groupbox>

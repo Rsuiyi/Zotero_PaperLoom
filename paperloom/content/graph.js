@@ -46,6 +46,11 @@
 		if (inited) return;
 		inited = true;
 
+		// 内嵌模式（对话面板下方的小图谱）：只留画布，工具栏与详情栏由 CSS 隐藏
+		if (new URLSearchParams(location.search).get("embed") === "1") {
+			document.body.classList.add("pl-embed");
+		}
+
 		canvas = $("pl-graph-canvas");
 		wrap = $("pl-graph-canvas-wrap");
 		ctx = canvas.getContext("2d");

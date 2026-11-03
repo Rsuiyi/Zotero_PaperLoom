@@ -1,17 +1,19 @@
 /* PaperLoom — settings.js
- * L3 表现层：独立设置窗口。
+ * L3 表现层：设置界面（独立窗口 / Zotero 设置面板内嵌共用同一份）。
  *
- * 为什么不只用 Zotero 原生设置面板：
- *   PreferencePanes 的加载方式在大版本之间变过（XUL / XHTML、resolveURI、defaultXUL），
- *   一旦注册失败，用户就完全没法配模型。这个窗口不依赖那套机制，
- *   只要能打开 chrome://paperloom/content/settings.xhtml 就能配置。
+ * 设计要点：
+ *   1. 只有这一份实现，?embed=1 表示嵌在 Zotero 设置面板里；
+ *   2. 模型下拉框通过 GET /models 实时拉取，取不到就保留手动输入；
+ *   3. 所有偏好写入都做类型转换（int 型偏好不能写字符串）。
  */
 (function () {
 	"use strict";
 
+	const EMBED = new URLSearchParams(location.search).get("embed") === "1";
+
 	// 三种打开方式都要能拿到 Zotero：
 	//   1. openDialog 传参（独立窗口）
-	//   2. 主窗口 iframe（Tab 兜底）
+	//   2. 主窗口 iframe（设置面板内嵌 / Tab 兜底）
 	//   3. opener（同源 chrome 窗口）
 	const arg = (window.arguments && window.arguments[0]) || {};
 	const Zotero = arg.Zotero
@@ -38,11 +40,12 @@
 
 	function setStatus(text, kind) {
 		const el = $("status");
+		if (!el) return;
 		el.textContent = text || "";
 		el.className = kind || "";
 	}
 
-	/** 读取一个偏好，带默认值兜底（未注册预定义的极旧版本也能用） */
+	/** 读取一个偏好，带默认值兜底 */
 	function readPref(key, type) {
 		let v;
 		try {
@@ -69,7 +72,6 @@
 			if (f.type === "bool") el.checked = v !== false;
 			else el.value = v === undefined ? "" : String(v);
 		}
-		// 显示实际生效的数据目录，省得用户猜文件落在哪
 		try {
 			$("resolvedDir").textContent = PL ? PL.Storage.root() : "—";
 		}
@@ -105,6 +107,59 @@
 		}
 	}
 
+	/**
+	 * 用接口返回的模型列表填充两个下拉框。
+	 * 当前值不在列表里时也保留一项，避免"配置看起来丢了"。
+	 */
+	function fillSelect(sel, models, current) {
+		if (!sel) return;
+		const keep = sel.value;
+		sel.innerHTML = "";
+
+		const placeholder = document.createElement("option");
+		placeholder.value = "";
+		placeholder.textContent = models.length ? "选择模型…" : "（拉取失败，可手动填写）";
+		sel.appendChild(placeholder);
+
+		const values = models.slice();
+		for (const extra of [current, keep]) {
+			if (extra && !values.includes(extra)) values.unshift(extra);
+		}
+
+		for (const id of values) {
+			if (!id) continue;
+			const opt = document.createElement("option");
+			opt.value = id;
+			opt.textContent = id;
+			sel.appendChild(opt);
+		}
+
+		sel.value = current && values.includes(current) ? current : "";
+	}
+
+	async function pullModels(silent) {
+		if (!PL || !PL.LLM) {
+			if (!silent) setStatus("领域层未加载，无法拉取模型列表", "err");
+			return;
+		}
+		if (!silent) setStatus("正在拉取模型列表…", "busy");
+		try {
+			const models = await PL.LLM.listModels();
+			const chat = $("chatModel").value;
+			const extract = $("extractModel").value;
+			fillSelect($("chatModelSel"), models || [], chat);
+			fillSelect($("extractModelSel"), models || [], extract);
+			if (!silent) {
+				setStatus(models && models.length ? "已获取 " + models.length + " 个模型" : "接口没有返回模型", models && models.length ? "ok" : "err");
+			}
+		}
+		catch (e) {
+			fillSelect($("chatModelSel"), [], $("chatModel").value);
+			fillSelect($("extractModelSel"), [], $("extractModel").value);
+			if (!silent) setStatus("拉取失败：" + (e && e.message || e) + "（仍可手动填写）", "err");
+		}
+	}
+
 	async function test() {
 		if (!PL || !PL.LLM) {
 			setStatus("领域层未加载，无法测试", "err");
@@ -122,20 +177,46 @@
 		}
 	}
 
+	function bindSelect(selId, inputId) {
+		const sel = $(selId);
+		const input = $(inputId);
+		if (!sel || !input) return;
+		sel.addEventListener("change", () => {
+			if (sel.value) {
+				input.value = sel.value;
+				setStatus("已选择 " + sel.value + "，记得保存", "ok");
+			}
+		});
+	}
+
 	function init() {
+		if (EMBED) {
+			document.body.classList.add("pl-embed");
+			const close = $("btn-close");
+			if (close) close.style.display = "none";
+		}
+
 		load();
 
 		$("btn-save").addEventListener("click", save);
 		$("btn-test").addEventListener("click", test);
-		$("btn-close").addEventListener("click", () => window.close());
+		$("btn-models").addEventListener("click", () => pullModels(false));
+		if ($("btn-close")) $("btn-close").addEventListener("click", () => window.close());
 
-		// 密码框的显示/隐藏，方便确认 Key 有没有粘错
 		$("btn-eye").addEventListener("click", () => {
 			const el = $("apiKey");
 			const showing = el.type === "text";
 			el.type = showing ? "password" : "text";
 			$("btn-eye").textContent = showing ? "显示" : "隐藏";
 		});
+
+		bindSelect("chatModelSel", "chatModel");
+		bindSelect("extractModelSel", "extractModel");
+
+		// 已经有 Key 时静默拉一次模型列表，省掉一次点击；失败不影响使用
+		if (readPref("apiKey", "string")) {
+			pullModels(true);
+		}
 	}
 
 	if (document.readyState === "loading") {

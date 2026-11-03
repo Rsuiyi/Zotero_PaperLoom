@@ -19,6 +19,21 @@
 
 		<div class="pl-messages" id="pl-messages"></div>
 
+		<!-- 下方面板：记忆与图谱实时可见，拖动上沿可调高度 -->
+		<div class="pl-dock-handle" id="pl-dock-handle" title="拖动调整下方面板高度"></div>
+		<div class="pl-dock" id="pl-dock">
+			<div class="pl-dock-tabs">
+				<button type="button" class="pl-dock-tab active" data-dock="memory">记忆</button>
+				<button type="button" class="pl-dock-tab" data-dock="graph">图谱</button>
+				<span style="flex:1"></span>
+				<span class="pl-muted" id="pl-dock-hint"></span>
+			</div>
+			<div class="pl-dock-body">
+				<div id="pl-memory-box" class="pl-memory-box"></div>
+				<iframe id="pl-graph-frame" src="chrome://paperloom/content/graph.xhtml?embed=1"></iframe>
+			</div>
+		</div>
+
 		<div class="pl-composer">
 			<div class="pl-ref-chips" id="pl-ref-chips"></div>
 			<textarea id="pl-input" placeholder="提问（输入 @ 可引用库里其他论文；Ctrl+Enter 发送）"></textarea>

@@ -5,18 +5,36 @@
 	<title>PaperLoom 设置</title>
 	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
 	<style>
-		/* 设置窗口独立成页：不依赖 Zotero 设置面板的实现细节，任何版本都能打开 */
-		body { font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 20px 24px 72px; color: #1f2328; background: #fff; }
+		/* 设置界面只有这一份实现：
+		   ?embed=1 时嵌进 Zotero 设置面板，否则作为独立窗口打开。 */
+		html, body { height: 100%; }
+		body {
+			font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+			margin: 0; padding: 20px 24px 76px; color: #1f2328; background: #fff;
+			overflow-y: auto;              /* 内容超出时右侧出滑条，不用拉大窗口 */
+			box-sizing: border-box;
+		}
 		h1 { font-size: 18px; margin: 0 0 4px; }
 		h2 { font-size: 14px; margin: 0 0 10px; color: #1f2328; }
+		.section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+		.section-head h2 { margin: 0; }
 		.pl-hint { color: #6a737d; margin: 0 0 18px; }
+
 		section { border: 1px solid #e1e4e8; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
 		.row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
 		.row > label { width: 150px; flex: none; color: #444d56; }
-		.row input[type="text"], .row input[type="password"], .row input[type="number"] { flex: 1; padding: 5px 8px; border: 1px solid #d1d5da; border-radius: 5px; font: inherit; }
+		.row input[type="text"], .row input[type="password"], .row input[type="number"], .row select {
+			padding: 5px 8px; border: 1px solid #d1d5da; border-radius: 5px; font: inherit; background: #fff;
+		}
+		.row input[type="text"], .row input[type="password"], .row input[type="number"] { flex: 1; }
+		.row select { max-width: 260px; }
 		.row .unit { color: #6a737d; font-size: 12px; }
 		.desc { color: #6a737d; font-size: 12px; margin: 2px 0 0 160px; }
-		footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 24px; background: #fafbfc; border-top: 1px solid #e1e4e8; display: flex; align-items: center; gap: 10px; }
+
+		footer {
+			position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 24px;
+			background: #fafbfc; border-top: 1px solid #e1e4e8; display: flex; align-items: center; gap: 10px;
+		}
 		button { padding: 6px 14px; border: 1px solid #d1d5da; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
 		button:hover { background: #f3f4f6; }
 		button.pl-primary { background: #2f6feb; border-color: #2f6feb; color: #fff; }
@@ -25,6 +43,11 @@
 		#status.ok { color: #1a7f37; }
 		#status.err { color: #cf222e; }
 		#status.busy { color: #6a737d; }
+
+		/* 嵌进 Zotero 设置面板时：去掉自己的标题与关闭按钮，省出高度 */
+		body.pl-embed { padding: 0 0 60px; background: transparent; }
+		body.pl-embed h1, body.pl-embed .pl-hint { display: none; }
+		body.pl-embed footer { position: sticky; left: auto; right: auto; padding: 8px 0; background: transparent; }
 	</style>
 </head>
 <body>
@@ -32,13 +55,17 @@
 	<p class="pl-hint">配置只保存在本机 Zotero 偏好中；只有提问时选中的上下文会发送到你填写的接口。</p>
 
 	<section>
-		<h2>大模型接口（OpenAI 兼容）</h2>
+		<div class="section-head">
+			<h2>大模型接口（OpenAI 兼容）</h2>
+			<span style="flex:1"></span>
+			<button type="button" id="btn-models" title="调用 GET /models 拉取可用模型">拉取模型列表</button>
+		</div>
 
 		<div class="row">
 			<label for="apiBase">API Base URL</label>
 			<input type="text" id="apiBase" placeholder="https://api.deepseek.com/v1" />
 		</div>
-		<div class="desc">填到 <code>/v1</code> 为止，插件会自动拼接 <code>/chat/completions</code>。</div>
+		<div class="desc">填到 <code>/v1</code> 为止，插件会自动拼接 <code>/chat/completions</code> 与 <code>/models</code>。</div>
 
 		<div class="row">
 			<label for="apiKey">API Key</label>
@@ -47,20 +74,26 @@
 		</div>
 
 		<div class="row">
-			<label for="chatModel">对话模型</label>
-			<input type="text" id="chatModel" placeholder="deepseek-chat" />
+			<label for="chatModelSel">对话模型</label>
+			<select id="chatModelSel">
+				<option value="">（先点右上「拉取模型列表」）</option>
+			</select>
+			<input type="text" id="chatModel" placeholder="deepseek-chat" style="max-width:220px" />
 		</div>
-		<div class="desc">回答问题时使用，建议选能力更强、上下文更长的模型。</div>
+		<div class="desc">左边下拉选，右边可手动改。回答问题时使用，建议能力更强、上下文更长的模型。</div>
 
 		<div class="row">
-			<label for="extractModel">抽取模型</label>
-			<input type="text" id="extractModel" placeholder="deepseek-chat" />
+			<label for="extractModelSel">抽取模型</label>
+			<select id="extractModelSel">
+				<option value="">（先点右上「拉取模型列表」）</option>
+			</select>
+			<input type="text" id="extractModel" placeholder="deepseek-chat" style="max-width:220px" />
 		</div>
 		<div class="desc">建图谱、抽概念、抽记忆时使用，选便宜、速度快的模型即可。</div>
 
 		<div class="row">
 			<label for="maxTokens">max_tokens</label>
-			<input type="number" id="maxTokens" min="1024" step="1024" />
+			<input type="number" id="maxTokens" min="1024" step="1024" style="max-width:160px" />
 			<span class="unit">≥ 4096 更稳</span>
 		</div>
 		<div class="desc">推理模型的 reasoning token 也计入 completion，给小了会出现空回答。</div>

@@ -48,9 +48,15 @@
   而 `maxTokens` / `timeoutMs` 在 `prefs.js` 里是 **int 型偏好**，写入字符串会直接抛类型错误；
 - `scripts` 选项加载的脚本**先于** DOM 插入执行，必须轮询等元素出现。
 
-结论：原生面板只保留一个「打开设置」按钮，所有输入框放在
-`chrome://paperloom/content/settings.xhtml` 的独立窗口里（`工具 → PaperLoom → 设置…` 也可直达）。
-这样设置入口不依赖任何版本的偏好面板实现，同时保留了在 Zotero 设置里的可见性。
+结论：**不在 fragment 里放任何带 `preference` 属性的控件**，而是整段内嵌
+`<html:iframe src="chrome://paperloom/content/settings.xhtml?embed=1">`。
+
+这样：
+
+- 点进 Zotero 设置里的 PaperLoom 就是完整设置，不需要再点一次按钮；
+- 设置界面只有一份实现（内嵌与独立窗口共用 `settings.xhtml`）；
+- 偏好读写全部走 `settings.js` 里的显式类型转换，不受各版本 `preference` 绑定差异影响；
+- 内嵌页面自身 `overflow-y: auto`，内容超出时右侧出滑条，不需要拉伸窗口。
 
 ---
 

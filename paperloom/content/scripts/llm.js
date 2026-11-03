@@ -96,6 +96,67 @@ PaperLoom.LLM = (function () {
 		throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
 	}
 
+	/** 统一的 GET JSON（目前只用于拉模型列表），传输层与 postJSON 一致 */
+	async function getJSON(url, headers, timeoutMs) {
+		if (typeof fetch === "function" && typeof AbortController === "function") {
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), timeoutMs);
+			let resp;
+			try {
+				resp = await fetch(url, { method: "GET", headers: headers, signal: controller.signal });
+			}
+			finally {
+				clearTimeout(timer);
+			}
+			const text = await resp.text().catch(() => "");
+			if (!resp.ok) {
+				throw new Error("HTTP " + resp.status + ": " + text.slice(0, 300));
+			}
+			try {
+				return text ? JSON.parse(text) : null;
+			}
+			catch (e) {
+				throw new Error("返回的不是 JSON：" + text.slice(0, 200));
+			}
+		}
+
+		if (Zotero.HTTP && Zotero.HTTP.request) {
+			const xhr = await Zotero.HTTP.request("GET", url, {
+				headers: headers,
+				responseType: "json",
+				timeout: timeoutMs,
+				successCodes: false
+			});
+			if (xhr.status < 200 || xhr.status >= 300) {
+				throw new Error("HTTP " + xhr.status);
+			}
+			return xhr.response;
+		}
+
+		throw new Error("当前运行环境无法发起 HTTP 请求");
+	}
+
+	/**
+	 * 拉取服务商可用模型列表（OpenAI 兼容的 GET /models）。
+	 * 各家未必都实现该接口，调用方必须能接受失败并允许手动填写。
+	 */
+	async function listModels() {
+		const cfg = config();
+		if (!cfg.apiKey) {
+			throw new Error("尚未填写 API Key");
+		}
+		const data = await getJSON(cfg.baseURL + "/models", {
+			"Authorization": "Bearer " + cfg.apiKey
+		}, Math.min(cfg.timeoutMs, 30000));
+
+		const arr = (data && (data.data || data.models)) || [];
+		const ids = arr
+			.map(m => (typeof m === "string" ? m : (m && m.id)))
+			.filter(Boolean);
+		// 去重并稳定排序，避免每次刷新下拉框顺序都变
+		return Array.from(new Set(ids)).sort();
+	}
+
 	/**
 	 * 连通性自检：只验证「接口通、鉴权对、模型名有效」，不关心模型说什么。
 	 * 故意用 max_tokens=16，避免为一次测试烧掉一整轮对话的额度。
@@ -242,5 +303,5 @@ PaperLoom.LLM = (function () {
 		return parsed;
 	}
 
-	return { complete, completeJSON, parseJSON, config, isConfigured, testConnection, postJSON };
+	return { complete, completeJSON, parseJSON, config, isConfigured, testConnection, listModels, postJSON };
 })();

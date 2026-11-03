@@ -147,10 +147,8 @@ async function registerPreferencePane() {
 	// 传绝对 file:// URI 在部分版本上会被当成外部地址。
 	const base = {
 		pluginID: PLUGIN_ID,
+		// 面板里直接内嵌 settings.xhtml?embed=1，点进 PaperLoom 就是完整设置
 		src: "content/preferences.xhtml",
-		// 面板里只放一个"打开设置"按钮；输入框全部集中在独立窗口，
-		// 避免各版本对 preference 属性类型处理不一致
-		scripts: ["content/preferences.js"],
 		label: "PaperLoom"
 	};
 
@@ -210,7 +208,8 @@ function registerItemPaneSection() {
 					// 必须走 chrome:// 资源：file:// 的 iframe 是独立 principal，
 					// 拿不到 window.top.Zotero，面板会报"领域层未加载"。
 					frame.setAttribute("src", "chrome://paperloom/content/chat.xhtml?mode=item");
-					frame.style.cssText = "display:block;width:100%;height:460px;border:0;";
+					// 给对话 + 下方记忆/图谱面板留出高度；窗口不够时由 Zotero 侧栏自己滚动
+					frame.style.cssText = "display:block;width:100%;height:560px;border:0;";
 					body.appendChild(frame);
 					body._paperloomFrame = frame;
 				}
