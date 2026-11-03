@@ -539,42 +539,6 @@ function injectReaderButton(reader) {
  * centerscreen 在部分窗口管理器/多屏环境下不生效，窗口会贴在上沿；
  * 这里在打开后再手动纠一次位置。
  */
-function centerDialog(win, w, sizes) {
-	if (!w) return;
-
-	const wantW = (sizes && sizes.width) || 700;
-	const wantH = (sizes && sizes.height) || 700;
-	let tries = 0;
-
-	const timer = win.setInterval(() => {
-		tries++;
-		try {
-			const sw = (w.screen && w.screen.availWidth) || 0;
-			const sh = (w.screen && w.screen.availHeight) || 0;
-			if (!sw || !sh) return;
-
-			// 窗口比屏幕还高时会被窗口管理器顶到上沿，先缩到可用区域内
-			const cw = Math.min(wantW, sw - 80);
-			const ch = Math.min(wantH, sh - 80);
-			try { w.resizeTo(cw, ch); } catch (e) { /* ignore */ }
-
-			// XUL 窗口自带的居中方法最可靠；没有才退回 moveTo
-			if (typeof w.centerWindowOnScreen === "function") {
-				w.centerWindowOnScreen();
-			}
-			else {
-				w.moveTo(
-					Math.max(0, Math.round((sw - cw) / 2)),
-					Math.max(0, Math.round((sh - ch) / 2))
-				);
-			}
-		}
-		catch (e) { /* 窗口还没就绪 */ }
-
-		if (tries > 30) win.clearInterval(timer);
-	}, 100);
-}
-
 function removeDock(win) {
 	try {
 		const doc = win.document;

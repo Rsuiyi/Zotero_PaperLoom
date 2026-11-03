@@ -48,6 +48,24 @@
 	if (document.readyState !== "loading") init();
 
 	let inited = false;
+	// 原生 confirm/prompt 在 chrome iframe 里可能不可用：全部走带兜底的封装
+	function confirmAction(text) {
+		try { return window.confirm(text); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().confirm(text); } catch (e) { /* ignore */ }
+		return true;
+	}
+
+	function promptAction(text, def) {
+		try { return window.prompt(text, def); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().prompt(text, def); } catch (e) { /* ignore */ }
+		return null;
+	}
+
+	function alertAction(text) {
+		try { window.alert(text); return; } catch (e) { /* ignore */ }
+		try { Zotero.getMainWindow().alert(text); } catch (e) { /* ignore */ }
+	}
+
 	async function init() {
 		if (inited) return;
 		inited = true;
@@ -76,7 +94,7 @@
 		const key = $("pl-mem-key").value.trim();
 		const value = $("pl-mem-value").value.trim();
 		if (!key || !value) {
-			window.alert("key 和 value 都不能为空。");
+			alertAction("key 和 value 都不能为空。");
 			return;
 		}
 		await PL.Memory.setExplicit(key, value, "用户在记忆面板中手动添加");
@@ -227,7 +245,7 @@
 		editBtn.textContent = "改正";
 		editBtn.title = "修改后会锁定为 explicit / confidence 1.00";
 		editBtn.addEventListener("click", async () => {
-			const next = window.prompt("修改「" + fact.key + "」的值（修改后将锁定，不再被推断覆盖）：", String(fact.value));
+			const next = promptAction("修改「" + fact.key + "」的值（修改后将锁定，不再被推断覆盖）：", String(fact.value));
 			if (next === null || !next.trim()) return;
 			await PL.Memory.setExplicit(fact.key, next.trim(), "用户在记忆面板中改正");
 			render();
@@ -248,7 +266,7 @@
 		const delBtn = document.createElement("button");
 		delBtn.textContent = "删除";
 		delBtn.addEventListener("click", async () => {
-			if (!window.confirm("删除记忆「" + fact.key + " = " + fact.value + "」？")) return;
+			if (!confirmAction("删除记忆「" + fact.key + " = " + fact.value + "」？")) return;
 			await PL.Memory.remove(fact.factId);
 			render();
 		});

@@ -116,6 +116,8 @@
 
 		applyFont(currentFont());
 		refreshStats();
+		window.setInterval(refreshStats, 5000);
+		window.addEventListener("focus", refreshStats);
 	}
 
 	function tryPickSelectedItem() {
@@ -153,10 +155,6 @@
 				reader = Zotero.Reader.getByTabID(tabs.selectedID);
 			}
 
-			if (!reader) {
-				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
-				reader = readers[readers.length - 1] || null;
-			}
 			if (!reader || !reader.itemID) return null;
 
 			const att = Zotero.Items.get(reader.itemID);
@@ -209,7 +207,12 @@
 		try {
 			const turns = await PL.Pipeline.recentTurns(currentItem ? currentItem.key : null, 20);
 			els.messages.innerHTML = "";
-			if (!turns || !turns.length) return;
+			if (!turns || !turns.length) {
+				renderIntro(mode === "library"
+					? "全库模式：问题会在整个已解析的文献库中检索。用 @ 可以把特定论文钉进上下文。"
+					: "选中一篇论文开始提问。输入 @ 可引用库里的其他论文。");
+				return;
+			}
 
 			for (const t of turns) {
 				renderUserMessage(t.query || "");
@@ -234,14 +237,18 @@
 
 	/** 真正删除落盘的历史（清屏只是清显示） */
 	async function clearHistory() {
-		const label = currentItem ? "当前论文" : "全库";
+		const target = mode === "library" ? null : (activePaperItem() || currentItem);
+		const label = target ? "当前论文" : "全库";
 		let ok = true;
 		try { ok = window.confirm("删除" + label + "的全部对话历史？此操作不可撤销。"); }
-		catch (e) { /* 无 confirm 上下文时直接执行 */ }
+		catch (e) {
+			try { ok = Zotero.getMainWindow().confirm("删除" + label + "的全部对话历史？此操作不可撤销。"); }
+			catch (e2) { ok = true; }
+		}
 		if (!ok) return;
 
 		try {
-			const removed = await PL.Pipeline.clearTurns(currentItem ? currentItem.key : null);
+			const removed = await PL.Pipeline.clearTurns(target ? target.key : null);
 			els.messages.innerHTML = "";
 			historyKey = null;
 			renderIntro("历史已删除（" + removed + " 轮）。");
@@ -276,6 +283,12 @@
 				showError("请先在文库中选中一篇论文，或打开它的 PDF。");
 				return;
 			}
+		}
+
+		// 上下文可能来自"正在阅读的 PDF"，和列表选中项不同：同步显示标题
+		if (mode !== "library" && askItem && (!currentItem || currentItem.key !== askItem.key)) {
+			try { els.label.textContent = String(askItem.getField("title") || askItem.key).slice(0, 60); }
+			catch (e) { /* ignore */ }
 		}
 
 		busy = true;
@@ -621,7 +634,7 @@
 				list = null;
 				const el = document.createElement("div");
 				el.className = "pl-md-h pl-md-h" + h[1].length;
-				renderInline(el, h[2], citations, titles, used, registerCitation, keyOf);
+				renderInline(el, h[2], citations, used, registerCitation, keyOf);
 				container.appendChild(el);
 				appendFootnotes(used);
 				continue;
@@ -633,7 +646,7 @@
 				list = null;
 				const el = document.createElement("blockquote");
 				el.className = "pl-md-quote";
-				renderInline(el, quote[1], citations, titles, used, registerCitation, keyOf);
+				renderInline(el, quote[1], citations, used, registerCitation, keyOf);
 				container.appendChild(el);
 				appendFootnotes(used);
 				continue;
@@ -648,7 +661,7 @@
 					container.appendChild(list);
 				}
 				const item = document.createElement("li");
-				renderInline(item, li[1], citations, titles, used, registerCitation, keyOf);
+				renderInline(item, li[1], citations, used, registerCitation, keyOf);
 				list.appendChild(item);
 				appendFootnotes(used);
 				continue;
@@ -658,7 +671,7 @@
 			list = null;
 			const p = document.createElement("div");
 			p.className = "pl-md-p";
-			renderInline(p, line, citations, titles, used, registerCitation, keyOf);
+			renderInline(p, line, citations, used, registerCitation, keyOf);
 			container.appendChild(p);
 			appendFootnotes(used);
 		}
@@ -668,7 +681,7 @@
 	 * 行内：**粗体** / `代码` / [PID, p.3] 引用。
 	 * 引用渲染成上标编号，并把对应脚注记到 used 里，由调用方在该段落后输出。
 	 */
-	function renderInline(container, text, citations, titles, used, registerCitation, keyOf) {
+	function renderInline(container, text, citations, used, registerCitation, keyOf) {
 		const re = /\[(?:PID:)?\s*([A-Za-z0-9_-]+)\s*,?\s*p\.?\s*(\d+)\s*\]|`([^`]+)`|\*\*([^*]+)\*\*/g;
 		let last = 0;
 		let m;
@@ -715,37 +728,6 @@
 		}
 	}
 
-	function makeCiteChip(citation, index, titles, opts) {
-		opts = opts || {};
-		const chip = document.createElement("span");
-		chip.className = "pl-cite" + (citation.valid === false ? " pl-cite-invalid" : "");
-
-		const page = opts.page || citation.page;
-		const title = citation.title || titles[citation.paperId] || citation.paperId;
-		chip.textContent = (index ? "[" + index + "] " : "")
-			+ String(title).slice(0, 24) + (page ? ", p." + page : "");
-
-		if (citation.valid === false) {
-			chip.title = "引用无法定位：" + ((citation.errors || []).join("；") || "未知原因");
-		}
-		else {
-			chip.title = (citation.quote ? "“" + String(citation.quote).slice(0, 160) + "”\n\n" : "")
-				+ "点击跳转到原文第 " + page + " 页";
-			chip.addEventListener("click", () => jumpTo(citation.paperId, page, citation.quote));
-		}
-		return chip;
-	}
-
-	/**
-	 * 跳转到原文页。
-	 * 首选 Zotero.Reader.open(attachmentID, location)，失败退回 zotero://open-pdf URI
-	 * （后者是官方支持的格式，比私有 API 稳）。
-	 */
-	/**
-	 * 决定"跳到哪一份 PDF"。
-	 * 同一篇论文可能同时有原版和翻译版，必须优先用用户当前实际打开的/选中的那份，
-	 * 否则点引用会莫名跳到原版。
-	 */
 	/**
 	 * 列出这篇论文所有可打开的 PDF 候选，按优先级排序：
 	 *   1. 当前已经打开的 reader（用户正在看的，可能是翻译版）
@@ -761,6 +743,18 @@
 		};
 
 		try {
+			// 当前标签页就是 PDF：它必须排第一（翻译版优先）
+			const win = Zotero.getMainWindow ? Zotero.getMainWindow() : null;
+			const tabs = win && win.Zotero_Tabs;
+			if (tabs && tabs.selectedID && Zotero.Reader.getByTabID) {
+				const active = Zotero.Reader.getByTabID(tabs.selectedID);
+				if (active && active.itemID) {
+					const att = Zotero.Items.get(active.itemID);
+					const parent = att && att.parentItemID ? Zotero.Items.get(att.parentItemID) : null;
+					if (parent && parent.key === paperId) push(active.itemID);
+				}
+			}
+
 			const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
 			for (const r of readers) {
 				if (!r.itemID) continue;

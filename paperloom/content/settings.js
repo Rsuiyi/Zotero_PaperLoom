@@ -205,7 +205,10 @@
 		try {
 			ok = window.confirm("删除服务商「" + (p.name || p.baseURL) + "」？依赖它的模型选择会失效。");
 		}
-		catch (e) { /* 某些上下文没有 confirm，直接执行 */ }
+		catch (e) {
+			try { ok = Zotero.getMainWindow().confirm("删除服务商「" + (p.name || p.baseURL) + "」？"); }
+			catch (e2) { ok = true; }
+		}
 
 		if (!ok) return;
 
@@ -228,85 +231,7 @@
 	 * 窗口到底在哪、屏幕可用区域多大、打开后有没有被系统移动。
 	 * 结果同时写进页面顶部和 <数据目录>/paperloom/windowlog.json。
 	 */
-	function logWindowGeometry() {
-		const snap = () => ({
-			t: Date.now(),
-			pos: [window.screenX, window.screenY],
-			outer: [window.outerWidth, window.outerHeight],
-			inner: [window.innerWidth, window.innerHeight],
-			availSize: [window.screen.availWidth, window.screen.availHeight],
-			availPos: [window.screen.availLeft, window.screen.availTop],
-			screenSize: [window.screen.width, window.screen.height],
-			dpr: window.devicePixelRatio
-		});
-
-		const samples = [];
-
-		const paint = () => {
-			const el = $("win-geo");
-			if (!el) return;
-			const s = samples[samples.length - 1];
-			el.textContent = "窗口 " + s.pos.join(",") + " · 尺寸 " + s.outer.join("×")
-				+ " · 屏幕可用 " + s.availSize.join("×")
-				+ " · 缩放 " + s.dpr;
-		};
-
-		// 一打开就记：写偏好（同步、一定成功）和文件（异步）
-		const record = () => {
-			try {
-				const s = snap();
-				samples.push(s);
-				try { Zotero.Prefs.set("extensions.paperloom.lastWindowGeometry", JSON.stringify(s), true); }
-				catch (e) { /* ignore */ }
-				if (PL && PL.Storage) {
-					PL.Storage.writeJSON("windowlog.json", {
-						at: new Date().toISOString(),
-						samples: samples
-					}).catch(() => { });
-				}
-				paint();
-			}
-			catch (e) { /* ignore */ }
-		};
-
-		record();
-		window.setTimeout(record, 600);
-		window.setTimeout(record, 1500);
-	}
-
 	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */
-	function centerWindow(w, sizes) {
-		if (!w) return;
-		const wantW = (sizes && sizes.width) || 680;
-		const wantH = (sizes && sizes.height) || 700;
-		let tries = 0;
-
-		const timer = window.setInterval(() => {
-			tries++;
-			try {
-				const sw = (w.screen && w.screen.availWidth) || 0;
-				const sh = (w.screen && w.screen.availHeight) || 0;
-				if (!sw || !sh) return;
-
-				const cw = Math.min(wantW, sw - 80);
-				const ch = Math.min(wantH, sh - 80);
-				try { w.resizeTo(cw, ch); } catch (e) { /* ignore */ }
-
-				if (typeof w.centerWindowOnScreen === "function") {
-					w.centerWindowOnScreen();
-				}
-				else {
-					w.moveTo(
-						Math.max(0, Math.round((sw - cw) / 2)),
-						Math.max(0, Math.round((sh - ch) / 2))
-					);
-				}
-			}
-			catch (e) { /* 窗口还没就绪 */ }
-			if (tries > 30) window.clearInterval(timer);
-		}, 100);
-	}
-
 	function openProviderDialog(providerId) {
 		const url = "chrome://paperloom/content/provider.xhtml"
 			+ (providerId ? ("?id=" + encodeURIComponent(providerId)) : "");

@@ -51,7 +51,6 @@
 	let view = { nodes: [], edges: [] };     // 过滤后的视图
 	let sim = null;
 	let camera = { x: 0, y: 0, scale: 1 };
-	let selected = null;                    // 详情面板展示的主节点
 	let selection = new Set();              // 多选集合（nodeId）
 	let hover = null;
 	let dragging = null;
@@ -123,7 +122,6 @@
 			}
 			else if (ev.key === "Escape") {
 				selection = new Set();
-				selected = null;
 				draw();
 			}
 		};
@@ -144,8 +142,6 @@
 		window.addEventListener("mouseup", onMouseUp);
 
 		canvas.addEventListener("mousedown", onMouseDown);
-		canvas.addEventListener("mousemove", onMouseMove);
-		canvas.addEventListener("mouseup", onMouseUp);
 		canvas.addEventListener("mouseleave", onMouseUp);
 		canvas.addEventListener("wheel", onWheel, { passive: false });
 		canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
@@ -173,6 +169,8 @@
 	async function load() {
 		try {
 			graph = await PL.GraphStore.load();
+			// 数据整体刷新后，旧的选中 id 可能已不存在
+			selection = new Set();
 			const stats = await PL.GraphStore.stats();
 			$("pl-graph-stats").textContent =
 				stats.papers + " 篇论文 · " + stats.concepts + " 个概念 · "
@@ -427,6 +425,12 @@
 		});
 	}
 
+	function promptAction(text, def) {
+		try { return window.prompt(text, def); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().prompt(text, def); } catch (e) { /* ignore */ }
+		return null;
+	}
+
 	function alertAction(text) {
 		try {
 			const win = Zotero.getMainWindow && Zotero.getMainWindow();
@@ -603,11 +607,9 @@
 				// shift 点选：加入 / 移出多选
 				if (selection.has(node.nodeId)) selection.delete(node.nodeId);
 				else selection.add(node.nodeId);
-				selected = node;
 			}
 			else {
 				selection = new Set([node.nodeId]);
-				selected = node;
 				dragging = node;
 			}
 			if (selection.size > 1) showSelectionSummary();
@@ -619,7 +621,6 @@
 		// 空白处按下：开始框选；不按 shift 则清空已有选择
 		if (!ev.shiftKey) {
 			selection = new Set();
-			selected = null;
 			$("pl-graph-detail").innerHTML = "";
 		}
 		box = { x0: sx, y0: sy, x1: sx, y1: sy };
@@ -672,13 +673,12 @@
 					}
 				}
 				if (selection.size > 1) {
-					selected = null;
-					showSelectionSummary();
+						showSelectionSummary();
 				}
 				else if (selection.size === 1) {
 					const onlyId = Array.from(selection)[0];
 					const only = view.nodes.find(n => n.nodeId === onlyId);
-					if (only) { selected = only; showDetail(only); }
+					if (only) showDetail(only);
 				}
 			}
 			box = null;
@@ -697,7 +697,6 @@
 		try {
 			await PL.GraphStore.removeNodes(Array.from(selection));
 			selection = new Set();
-			selected = null;
 			$("pl-graph-detail").innerHTML = "";
 			$("pl-graph-hint").style.display = "block";
 			await load();
@@ -750,7 +749,7 @@
 	}
 
 	async function renameNodeAction(node) {
-		const next = window.prompt("新的概念名称", node.label);
+		const next = promptAction("新的概念名称", node.label);
 		if (next == null) return;
 		const label = String(next).trim();
 		if (!label || label === node.label) return;
@@ -897,7 +896,7 @@
 					if (fresh) showDetail(fresh);
 				}
 				catch (err) {
-					window.alert("删除失败：" + err);
+					alertAction("删除失败：" + err);
 				}
 			});
 			card.appendChild(delEdge);
