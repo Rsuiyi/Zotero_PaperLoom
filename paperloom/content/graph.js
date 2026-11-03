@@ -119,6 +119,15 @@
 		window.addEventListener("keydown", onKeyDown, true);
 		document.addEventListener("keydown", onKeyDown, true);
 
+		// Zotero 的键盘事件有时落在顶层文档：补一层，但只在图谱 iframe 有焦点时响应
+		try {
+			window.top.document.addEventListener("keydown", (ev) => {
+				if (!document.hasFocus()) return;
+				onKeyDown(ev);
+			}, true);
+		}
+		catch (e) { /* 跨域则忽略 */ }
+
 		// 拖拽/框选可能移出画布：move/up 挂到 window 上
 		window.addEventListener("mousemove", onMouseMove);
 		window.addEventListener("mouseup", onMouseUp);
@@ -349,6 +358,26 @@
 
 	function toWorld(sx, sy) {
 		return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };
+	}
+
+	/** chrome iframe 里 window.confirm 可能不可用：优先用主窗口的模态框 */
+	function confirmAction(text) {
+		try {
+			const win = Zotero.getMainWindow && Zotero.getMainWindow();
+			if (win && typeof win.confirm === "function") return win.confirm(text);
+		}
+		catch (e) { /* ignore */ }
+		try { return window.confirm(text); } catch (e) { /* ignore */ }
+		return true;
+	}
+
+	function alertAction(text) {
+		try {
+			const win = Zotero.getMainWindow && Zotero.getMainWindow();
+			if (win && typeof win.alert === "function") { win.alert(text); return; }
+		}
+		catch (e) { /* ignore */ }
+		try { window.alert(text); } catch (e) { /* ignore */ }
 	}
 
 	function draw() {
@@ -594,7 +623,7 @@
 	/** Del / Backspace：删除所有选中的节点（先确认） */
 	async function deleteSelection() {
 		if (!selection.size) return;
-		if (!window.confirm("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。")) return;
+		if (!confirmAction("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。")) return;
 
 		try {
 			await PL.GraphStore.removeNodes(Array.from(selection));
@@ -605,7 +634,7 @@
 			await load();
 		}
 		catch (e) {
-			window.alert("删除失败：" + e);
+			alertAction("删除失败：" + e);
 		}
 	}
 
@@ -634,12 +663,12 @@
 			await load();
 		}
 		catch (e) {
-			window.alert("添加概念失败：" + e);
+			alertAction("添加概念失败：" + e);
 		}
 	}
 
 	async function deleteNodeAction(node) {
-		if (!window.confirm("删除概念「" + node.label + "」及其全部关联边？")) return;
+		if (!confirmAction("删除概念「" + node.label + "」及其全部关联边？")) return;
 		try {
 			await PL.GraphStore.removeNode(node.nodeId);
 			$("pl-graph-detail").innerHTML = "";
@@ -647,7 +676,7 @@
 			await load();
 		}
 		catch (e) {
-			window.alert("删除失败：" + e);
+			alertAction("删除失败：" + e);
 		}
 	}
 
@@ -662,7 +691,7 @@
 			if (updated) showDetail(updated);
 		}
 		catch (e) {
-			window.alert("改名失败：" + e);
+			alertAction("改名失败：" + e);
 		}
 	}
 
@@ -760,7 +789,7 @@
 			const delEdge = document.createElement("button");
 			delEdge.textContent = "删除这条边";
 			delEdge.addEventListener("click", async () => {
-				if (!window.confirm("删除这条关联边？")) return;
+				if (!confirmAction("删除这条关联边？")) return;
 				try {
 					await PL.GraphStore.removeEdge(e.edgeId);
 					await load();
