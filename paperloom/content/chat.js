@@ -104,6 +104,7 @@
 		if (mode === "library") {
 			els.label.textContent = "全库对话";
 			renderIntro("全库模式：问题会在整个已解析的文献库中检索。用 @ 可以把特定论文钉进上下文。");
+			restoreHistory();
 		}
 		else {
 			els.label.textContent = "当前论文";
@@ -152,8 +153,51 @@
 		item = normalizeItem(item);
 		if (currentItem && item && currentItem.key === item.key) return;
 		currentItem = item;
+		restoreHistory();
 		if (mode !== "library" && item) {
 			els.label.textContent = String(item.getField("title") || item.key).slice(0, 60);
+		}
+	}
+
+	// ------------------------------------------------------------ 历史恢复
+
+	let historyKey = null;
+
+	/**
+	 * 从 turns.json 里恢复这段对话。
+	 * Zotero 重启后 iframe 是新的，DOM 不会保留；但每一轮都已经落盘了，
+	 * 所以这里按"当前论文"重新渲染出来。
+	 */
+	async function restoreHistory() {
+		if (!PL || !PL.Pipeline || !PL.Pipeline.recentTurns) return;
+
+		const key = currentItem ? currentItem.key : "__library__";
+		if (historyKey === key) return;
+		historyKey = key;
+
+		try {
+			const turns = await PL.Pipeline.recentTurns(currentItem ? currentItem.key : null, 20);
+			els.messages.innerHTML = "";
+			if (!turns || !turns.length) return;
+
+			for (const t of turns) {
+				renderUserMessage(t.query || "");
+				renderAnswer({
+					answer: t.answer || "",
+					citations: t.citations || [],
+					titles: {},
+					intent: "single_fact",
+					memoryUsed: [],
+					usage: t.usage || null,
+					turn: t,
+					warnings: [],
+					sources: []
+				});
+			}
+			scrollToBottom();
+		}
+		catch (e) {
+			/* 历史读不出来不影响新对话 */
 		}
 	}
 
@@ -710,37 +754,99 @@
 	async function jumpTo(paperId, page, quote) {
 		try {
 			const candidates = await candidateAttachments(paperId);
+			if (!candidates.length) {
+				const id = await Zotero.Items.getIDFromLibraryAndKey(Zotero.Libraries.userLibraryID, paperId);
+				if (id) Zotero.getActiveZoteroPane().selectItem(id);
+				showError("这篇论文找不到可打开的 PDF 附件。");
+				return;
+			}
+
+			// 只打开第一份：多候选循环会把原版和翻译版各开一个标签页
+			const attachmentId = candidates[0];
 			const pageIndex = Math.max(0, (page || 1) - 1);
 
-			// 逐个候选尝试打开；任何一个成功就停
-			for (const attachmentId of candidates) {
-				try {
-					if (Zotero.Reader && Zotero.Reader.open) {
-						await Zotero.Reader.open(attachmentId, { pageIndex: pageIndex });
-						if (quote) highlightWithRetry(attachmentId, page, quote);
-						return;
-					}
-				}
-				catch (e) { /* 换下一个候选 */ }
+			try {
+				await Zotero.Reader.open(attachmentId, { pageIndex: pageIndex });
+				if (quote) highlightWithRetry(attachmentId, page, quote);
+				return;
 			}
-
-			// 阅读器 API 都失败：用官方 URI 打开第一个候选
-			if (candidates.length) {
-				const att = await Zotero.Items.getAsync(candidates[0]);
-				if (att && att.key) {
-					Zotero.launchURL("zotero://open-pdf/library/items/" + att.key + "?page=" + (page || 1));
-					return;
-				}
+			catch (e) {
+				// 不用 zotero:// URI：它会弹 "Open the Zotero link with Zotero?" 确认框
+				const att = await Zotero.Items.getAsync(attachmentId);
+				if (att && att.parentItemID) Zotero.getActiveZoteroPane().selectItem(att.parentItemID);
+				showError("打开 PDF 失败：" + e);
 			}
-
-			// 连附件都没有：至少选中条目
-			const id = await Zotero.Items.getIDFromLibraryAndKey(Zotero.Libraries.userLibraryID, paperId);
-			if (id) Zotero.getActiveZoteroPane().selectItem(id);
-			else showError("这篇论文找不到可打开的 PDF 附件。");
 		}
 		catch (e) {
 			showError("跳转失败：" + e);
 		}
+	}
+
+	// ------------------------------------------------------------ 原文高亮
+
+	/**
+	 * 在阅读器里高亮引用的那一句（而不是整页）。
+	 * 只在文本层 DOM 上加临时背景色，不写入 Zotero 标注库。
+	 */
+	async function highlightInReader(attachmentId, page, quote) {
+		const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+		const reader = readers.find(r => r.itemID === attachmentId);
+		if (!reader) return false;
+
+		let win = null;
+		try {
+			win = reader._iframeWindow && (reader._iframeWindow.wrappedJSObject || reader._iframeWindow);
+		}
+		catch (e) {
+			return false;
+		}
+		if (!win || !win.document) return false;
+
+		const doc = win.document;
+		const spans = Array.from(doc.querySelectorAll(".textLayer span"));
+		if (!spans.length) return false;
+
+		const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+		const needle = norm(quote).slice(0, 40);
+		if (!needle) return false;
+
+		let target = spans.find(sp => norm(sp.textContent).includes(needle));
+		if (!target) {
+			const frag = needle.split(" ").filter(w => w.length >= 4).slice(0, 3).join(" ");
+			if (frag) target = spans.find(sp => norm(sp.textContent).includes(frag));
+		}
+		if (!target) return false;
+
+		for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
+
+		if (!doc.getElementById("paperloom-hl-style")) {
+			const style = doc.createElement("style");
+			style.id = "paperloom-hl-style";
+			style.textContent = ".paperloom-hl{background:rgba(255,214,0,.55)!important;border-radius:2px;box-shadow:0 0 0 2px rgba(255,214,0,.35);}";
+			(doc.head || doc.documentElement).appendChild(style);
+		}
+
+		target.classList.add("paperloom-hl");
+		try { target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { /* ignore */ }
+		return true;
+	}
+
+	/** 阅读器打开后需要等页面渲染：最多重试约 8 秒 */
+	async function highlightWithRetry(attachmentId, page, quote) {
+		for (let i = 0; i < 20; i++) {
+			await new Promise(r => setTimeout(r, 400));
+			try {
+				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+				const reader = readers.find(r => r.itemID === attachmentId);
+				if (reader && reader.navigate) {
+					try { await reader.navigate({ pageIndex: Math.max(0, (page || 1) - 1) }); }
+					catch (e) { /* ignore */ }
+				}
+				if (await highlightInReader(attachmentId, page, quote)) return true;
+			}
+			catch (e) { /* 重试 */ }
+		}
+		return false;
 	}
 
 	function openPanel(kind) {
