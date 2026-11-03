@@ -20,7 +20,8 @@ PaperLoom 把三件事做成一个闭环：
 
 **开发中。** 插件骨架与领域层已实现，正在真机冒烟。
 
-- 目标宿主：**Zotero 10.x**（兼容 7.0 及以上），bootstrap 插件，原生 JS，零构建步骤
+- 目标宿主：**Zotero 7 / 8 / 9 / 10**（`compat.js` 能力探测，不按版本号写死；缺 API 自动降级）
+- bootstrap 插件，原生 JS，零构建步骤
 - 数据全部本地存储，仅将选中的上下文发往所配置的 LLM 接口
 - 兼容性结论与回归清单见 [docs/zotero10-compat.md](docs/zotero10-compat.md)
 

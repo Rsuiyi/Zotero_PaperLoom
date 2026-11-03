@@ -90,30 +90,54 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-		let resp;
-		try {
-			resp = await fetch(cfg.baseURL + "/chat/completions", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"Authorization": "Bearer " + cfg.apiKey
-				},
+		const url = cfg.baseURL + "/chat/completions";
+		const headers = {
+			"Content-Type": "application/json",
+			"Authorization": "Bearer " + cfg.apiKey
+		};
+
+		let data;
+		if (typeof fetch === "function" && typeof AbortController === "function") {
+			// 首选路径：各版本主窗口都有 fetch
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+			let resp;
+			try {
+				resp = await fetch(url, {
+					method: "POST",
+					headers: headers,
+					body: JSON.stringify(payload),
+					signal: controller.signal
+				});
+			}
+			finally {
+				clearTimeout(timer);
+			}
+
+			if (!resp.ok) {
+				const body = await resp.text().catch(() => "");
+				throw new Error("LLM HTTP " + resp.status + ": " + body.slice(0, 500));
+			}
+			data = await resp.json();
+		}
+		else if (Zotero.HTTP && Zotero.HTTP.request) {
+			// 兜底路径：沙箱拿不到 fetch 时走 Zotero 自带的 HTTP 封装（免 CORS）
+			const xhr = await Zotero.HTTP.request("POST", url, {
+				headers: headers,
 				body: JSON.stringify(payload),
-				signal: controller.signal
+				responseType: "json",
+				timeout: cfg.timeoutMs,
+				successCodes: false
 			});
+			data = xhr.response;
+			if (xhr.status < 200 || xhr.status >= 300) {
+				throw new Error("LLM HTTP " + xhr.status);
+			}
 		}
-		finally {
-			clearTimeout(timer);
+		else {
+			throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
 		}
 
-		if (!resp.ok) {
-			const body = await resp.text().catch(() => "");
-			throw new Error("LLM HTTP " + resp.status + ": " + body.slice(0, 500));
-		}
-
-		const data = await resp.json();
 		const choice = data && data.choices && data.choices[0];
 		let content = choice && choice.message && choice.message.content;
 

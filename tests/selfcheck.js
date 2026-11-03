@@ -43,7 +43,8 @@ const sandbox = { IOUtils, PathUtils, Zotero, console, fetch: async () => { thro
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
-for (const f of ["schema.js", "storage.js", "llm.js", "chunker.js", "retriever.js",
+// 与 bootstrap.js 的加载顺序保持一致：compat.js 必须最先
+for (const f of ["compat.js", "schema.js", "storage.js", "llm.js", "chunker.js", "retriever.js",
 	"memory.js", "graphStore.js", "pipeline.js", "stubs.js"]) {
 	vm.runInContext(fs.readFileSync(path.join(ROOT, f), "utf8"), sandbox, { filename: f });
 }
@@ -383,6 +384,29 @@ function section(t) { console.log("\n" + t); }
 
 		const ignored = await PL.Memory.recordBehavior({ type: "unknown.signal" });
 		check("未知行为信号被忽略", ignored.action === "ignored");
+	}
+
+	section("11. compat 能力探测（7/8/9/10 差异收口点）");
+	{
+		const c = PL.Compat.caps();
+		check("能取到数据目录（DataDirectory.dir）", c.dataDir === true, JSON.stringify(c));
+		check("缺失的 API 被如实报告为 false",
+			c.itemPaneSections === false && c.preferencePanes === false, JSON.stringify(c));
+		check("dataDir() 解析出目录", typeof PL.Compat.dataDir() === "string" && PL.Compat.dataDir().length > 0,
+			PL.Compat.dataDir());
+
+		// sectionOptions 必须自动补齐 header/sidenav 的 icon（7.1+/10 的必填项）
+		const opts = PL.Compat.sectionOptions({
+			paneID: "x",
+			header: { l10nID: "h" },
+			sidenav: { l10nID: "s" }
+		}, "chrome://paperloom/content/icons/paperloom.svg");
+		check("★ sectionOptions 自动补 header.icon", !!opts.header.icon, JSON.stringify(opts.header));
+		check("★ sectionOptions 自动补 sidenav.icon", !!opts.sidenav.icon, JSON.stringify(opts.sidenav));
+		check("sectionOptions 不丢原有字段", opts.header.l10nID === "h" && opts.paneID === "x");
+
+		check("describe() 输出缺失能力清单", typeof PL.Compat.describe() === "string",
+			PL.Compat.describe());
 	}
 
 	console.log("\n" + "=".repeat(50));

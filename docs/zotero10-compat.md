@@ -1,8 +1,22 @@
-# Zotero 10 兼容性说明
+# Zotero 7–10 兼容性说明
 
-记录本插件从 Zotero 7 写法迁到 **Zotero 10.0.7** 时踩到的坑、依据和改法。
-所有结论都来自本机 `E:\科研工具\论文翻译器与插件\Zotero\app\omni.ja` 里的真实源码，
-不是猜的。换 Zotero 大版本时，按第 3 节清单回归一遍。
+本插件**不按版本号写死**，而是用 `content/scripts/compat.js` 做能力探测：
+有哪个 API 就用哪条路径，缺了就降级，业务代码里没有任何版本判断。
+
+下表是迁移过程中踩到的坑与依据。结论来自本机 **Zotero 10.0.7** 的
+`E:\科研工具\论文翻译器与插件\Zotero\app\omni.ja` 真实源码，不是猜的。
+换大版本时，按第 3 节清单回归一遍。
+
+## 0. 适配策略
+
+| 层 | 做法 |
+|---|---|
+| 入口 | 侧栏（`ItemPaneManager`）→ 不可用则菜单打开独立窗口，功能不丢 |
+| 全文 | 缓存文件 → `PDFWorker.getFullText` → `Fulltext.getIndexedText`（7–9）→ `indexItems` 后重读缓存 → 摘要 |
+| 网络 | `fetch` → `Zotero.HTTP.request` |
+| 存储 | `Zotero.DataDirectory.dir` → profile 目录 |
+| UI | 统一走 `chrome://paperloom/content/...`（7–10 都支持 `registerChrome`） |
+| 版本区间 | `manifest` 里写 `7.0` ~ `10.99.99`，覆盖当前所有在维护的大版本 |
 
 ---
 

@@ -158,8 +158,8 @@ PaperLoom.Chunker = (function () {
 			catch (e) { /* 继续尝试下一条路径 */ }
 
 			// 路径 2：直接让 PDFWorker 抽文本。
-			// Zotero 10 已移除 Fulltext.getIndexedText()，必须改走 PDFWorker.getFullText()；
-			// 它返回的 text 同样带 \f 分页符，能保留真实页码。
+			// 这是 7–10 都存在的接口；10 虽然删了 Fulltext.getIndexedText()，但这条不受影响。
+			// 返回的 text 同样带 \f 分页符，能保留真实页码。
 			try {
 				if (Zotero.PDFWorker && Zotero.PDFWorker.getFullText) {
 					const full = await Zotero.PDFWorker.getFullText(attachment.id);
@@ -175,10 +175,27 @@ PaperLoom.Chunker = (function () {
 			}
 			catch (e) { /* 继续 */ }
 
-			// 路径 3：强制建一次全文索引，再读缓存文件。
-			// 有些环境（PDF 转换器缺失、EPUB 等）PDFWorker 拿不到文本，索引是最后一条兜底。
+			// 路径 3：Zotero 7–9 的旧接口（10 已移除，所以用能力探测而不是版本号判断）
 			try {
-				if (Zotero.Fulltext && Zotero.Fulltext.indexItems) {
+				const caps = PaperLoom.Compat.caps();
+				if (caps.fulltextIndexedText) {
+					const text = await Zotero.Fulltext.getIndexedText(attachment.id);
+					if (text && String(text).trim()) {
+						fillPagesFromText(result, text);
+						if (result.pages.length) {
+							result.source = "fulltext-indexed-text";
+							return result;
+						}
+					}
+				}
+			}
+			catch (e) { /* 继续 */ }
+
+			// 路径 4：强制建一次全文索引，再读缓存文件。
+			// 有些环境（PDF 转换器缺失、EPUB 等）前两条都拿不到文本，索引是最后一条兜底。
+			try {
+				const caps = PaperLoom.Compat.caps();
+				if (caps.fulltextIndexItems && caps.fulltextCache) {
 					await Zotero.Fulltext.indexItems([attachment.id], { complete: true, ignoreErrors: true });
 					const cachePath = Zotero.Fulltext.getItemCacheFile(attachment).path;
 					if (cachePath && await IOUtils.exists(cachePath)) {
@@ -193,7 +210,7 @@ PaperLoom.Chunker = (function () {
 			catch (e) { /* 继续 */ }
 		}
 
-		// 路径 3：没有附件全文，退回元数据摘要，至少让对话有上下文
+		// 路径 5：没有附件全文，退回元数据摘要，至少让对话有上下文
 		const abs = item.getField ? (item.getField("abstractNote") || "") : "";
 		if (abs.trim()) {
 			result.pages.push({ page: 1, text: abs });

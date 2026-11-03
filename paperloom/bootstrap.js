@@ -55,8 +55,9 @@ async function startup({ id, version, rootURI }) {
 
 		// ---- 载入领域层（纯 JS，与运行环境无关，Plan B 可整体搬去 Web 应用）
 		// loadSubScript 的目标对象不会继承 bootstrap 作用域，必须把依赖显式放进去。
+		// compat.js 必须第一个加载：后面所有模块都通过它判断当前 Zotero 有哪些能力
 		const scripts = [
-			"schema.js", "storage.js", "llm.js", "chunker.js",
+			"compat.js", "schema.js", "storage.js", "llm.js", "chunker.js",
 			"retriever.js", "memory.js", "graphStore.js", "pipeline.js", "stubs.js"
 		];
 		const scope = createDomainScope();
@@ -70,6 +71,7 @@ async function startup({ id, version, rootURI }) {
 
 		await PaperLoom.Storage.ensureDir();
 		log("领域层就绪，数据目录 " + PaperLoom.Storage.root());
+		log("能力探测：" + PaperLoom.Compat.describe() + "（列出的是当前版本缺失的能力）");
 
 		// ---- 注册 chrome 资源，供 chrome://paperloom/content/... 使用
 		const aomStartup = Components.classes["@mozilla.org/addons/addon-manager-startup;1"]
@@ -136,40 +138,56 @@ function onMainWindowUnload({ window }) {
 // ------------------------------------------------------------------ 偏好面板
 
 async function registerPreferencePane() {
+	if (!PaperLoom.Compat.caps().preferencePanes) {
+		log("当前 Zotero 不支持 PreferencePanes.register，跳过设置面板（不影响主功能）");
+		return;
+	}
+
+	// src 统一用相对插件根目录的路径，由各版本自行解析；
+	// 传绝对 file:// URI 在部分版本上会被当成外部地址。
+	const base = {
+		pluginID: PLUGIN_ID,
+		src: "content/preferences.xhtml",
+		label: "PaperLoom"
+	};
+
 	try {
-		// src 用相对插件根目录的路径，交给 Zotero 自己解析；
-		// 传绝对 file:// URI 在 Zotero 10 上会被 resolveURI 当作外部地址处理。
-		preferencePaneID = await Zotero.PreferencePanes.register({
-			pluginID: PLUGIN_ID,
-			src: "content/preferences.xhtml",
-			label: "PaperLoom",
-			image: "content/icons/paperloom.svg"
-		});
+		preferencePaneID = await Zotero.PreferencePanes.register(
+			Object.assign({ image: "content/icons/paperloom.svg" }, base)
+		);
 		log("偏好面板已注册: " + preferencePaneID);
 	}
 	catch (e) {
-		log("偏好面板注册失败: " + e);
+		// image 这类可选字段在旧版本可能不被接受：去掉再试一次
+		try {
+			preferencePaneID = await Zotero.PreferencePanes.register(base);
+			log("偏好面板已注册（无图标）: " + preferencePaneID);
+		}
+		catch (e2) {
+			log("偏好面板注册失败: " + e2);
+		}
 	}
 }
 
 // ------------------------------------------------------------------ 侧栏 section
 
 function registerItemPaneSection() {
-	if (!Zotero.ItemPaneManager || !Zotero.ItemPaneManager.registerSection) {
-		log("当前 Zotero 版本不支持 ItemPaneManager.registerSection，侧栏面板不可用");
+	if (!PaperLoom.Compat.caps().itemPaneSections) {
+		log("当前 Zotero 不支持 ItemPaneManager.registerSection，侧栏不可用；"
+			+ "已保留「工具 → PaperLoom → 打开对话面板」的窗口入口");
 		return;
 	}
 
-	// Zotero 7.1+ / 10：header 与 sidenav 都必须带 icon，缺了会被 _validateObject
-	// 直接判无效且只写日志，表现就是"插件装上了但侧栏什么都没有"。
 	const ICON = "chrome://paperloom/content/icons/paperloom.svg";
 
 	try {
-		registeredSectionID = Zotero.ItemPaneManager.registerSection({
+		// sectionOptions 会补齐各版本对 header/sidenav 的必填项（icon 等），
+		// 这里不写任何版本号判断。
+		registeredSectionID = Zotero.ItemPaneManager.registerSection(PaperLoom.Compat.sectionOptions({
 			paneID: "paperloom-chat",
 			pluginID: PLUGIN_ID,
-			header: { l10nID: "paperloom-section-header", icon: ICON },
-			sidenav: { l10nID: "paperloom-section-sidenav", icon: ICON },
+			header: { l10nID: "paperloom-section-header" },
+			sidenav: { l10nID: "paperloom-section-sidenav" },
 			bodyXHTML: '<html:div class="paperloom-section-root"></html:div>',
 			onInit: ({ body }) => {
 				if (body) body._paperloomFrame = null;
@@ -196,11 +214,16 @@ function registerItemPaneSection() {
 
 				postItemToFrame(body._paperloomFrame, item);
 			}
-		});
+		}, ICON));
+
+		if (!registeredSectionID) {
+			throw new Error("registerSection 返回 false：选项未通过当前版本的校验");
+		}
 		log("侧栏 section 已注册: " + registeredSectionID);
 	}
 	catch (e) {
-		log("侧栏 section 注册失败: " + e);
+		log("侧栏 section 注册失败（不影响窗口入口）: " + e);
+		registeredSectionID = null;
 	}
 }
 
@@ -234,8 +257,12 @@ function addToWindow(win) {
 	const doc = win.document;
 	if (doc.getElementById("paperloom-menu")) return;
 
-	const toolsPopup = doc.getElementById("menu_ToolsPopup");
-	if (!toolsPopup) return;
+	// 工具菜单是 Zotero 7–10 都有的稳定入口；万一没有，退到主菜单栏
+	const host = doc.getElementById("menu_ToolsPopup") || doc.getElementById("main-menubar");
+	if (!host) {
+		log("找不到可用菜单容器，菜单入口未挂载");
+		return;
+	}
 
 	const menu = doc.createXULElement("menu");
 	menu.id = "paperloom-menu";
@@ -244,13 +271,15 @@ function addToWindow(win) {
 	const popup = doc.createXULElement("menupopup");
 	menu.appendChild(popup);
 
+	// 侧栏不可用时，这一项就是唯一的对话入口（不依赖 ItemPaneManager）
+	popup.appendChild(makeMenuItem(doc, "paperloom-menu-itemchat", "打开对话面板（当前论文）", () => openTab(win, "itemchat")));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-graph", "打开知识图谱", () => openTab(win, "graph")));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-memory", "打开记忆卡片", () => openTab(win, "memory")));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-chat", "打开全库对话", () => openTab(win, "chat")));
 	popup.appendChild(doc.createXULElement("menuseparator"));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-rebuild", "重建所选论文的图谱", () => rebuildSelected(win)));
 
-	toolsPopup.appendChild(menu);
+	host.appendChild(menu);
 }
 
 function makeMenuItem(doc, id, label, handler) {
@@ -268,6 +297,8 @@ function removeFromWindow(win) {
 }
 
 const TAB_SPECS = {
+	// itemchat 是侧栏不可用时的替代入口：面板会自己读取当前选中条目
+	itemchat: { title: "PaperLoom 对话", src: "chrome://paperloom/content/chat.xhtml?mode=item" },
 	graph: { title: "PaperLoom 图谱", src: "chrome://paperloom/content/graph.xhtml" },
 	memory: { title: "PaperLoom 记忆", src: "chrome://paperloom/content/memory.xhtml" },
 	chat: { title: "PaperLoom 全库对话", src: "chrome://paperloom/content/chat.xhtml?mode=library" }
@@ -289,29 +320,23 @@ function openTab(win, kind) {
 		catch (e) { delete openTabIDs[kind]; }
 	}
 
-	try {
-		const { id, container } = win.Zotero_Tabs.add({
-			type: "paperloom-" + kind,
-			title: spec.title,
-			select: true,
-			onClose: () => { delete openTabIDs[kind]; }
-		});
-		openTabIDs[kind] = id;
+	// Compat.openTab 内部按能力选择：自定义 Tab → 独立窗口。
+	// 任何版本上都不会因为私有 API 缺失而失去入口。
+	const opened = PaperLoom.Compat.openTab(win, {
+		type: "paperloom-" + kind,
+		title: spec.title,
+		src: spec.src,
+		onClose: () => { delete openTabIDs[kind]; }
+	});
 
-		const frame = win.document.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
-		frame.setAttribute("src", spec.src);
-		frame.style.width = "100%";
-		frame.style.height = "100%";
-		frame.style.border = "0";
-		frame.setAttribute("flex", "1");
-		container.appendChild(frame);
-	}
-	catch (e) {
-		// fallback：私有 API 变动时仍然能用独立窗口演示
-		log("Zotero_Tabs.add 失败，退回独立窗口: " + e);
-		win.openDialog(spec.src, "paperloom-" + kind,
-			"chrome,resizable,centerscreen,width=1100,height=760");
-	}
+	if (!opened) return;   // 已退回独立窗口
+
+	openTabIDs[kind] = opened.id;
+	const frame = win.document.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
+	frame.setAttribute("src", spec.src);
+	frame.style.cssText = "width:100%;height:100%;border:0;";
+	frame.setAttribute("flex", "1");
+	opened.container.appendChild(frame);
 }
 
 async function rebuildSelected(win) {
