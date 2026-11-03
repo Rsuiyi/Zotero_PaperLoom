@@ -259,7 +259,19 @@
 		// providerId 同时放进 query：即使窗口打开方式不支持传参（window.open），编辑也能正确加载
 		const url = "chrome://paperloom/content/provider.xhtml"
 			+ (providerId ? ("?id=" + encodeURIComponent(providerId)) : "");
-		const features = "chrome,dialog=no,resizable,centerscreen,width=680,height=700";
+
+		// 同样把 left/top 写死进 features：centerscreen 不可靠
+		const sw = (window.screen && window.screen.availWidth) || 1920;
+		const sh = (window.screen && window.screen.availHeight) || 1080;
+		const width = Math.min(680, sw - 80);
+		const height = Math.min(700, sh - 80);
+		const left = Math.max(0, Math.round((sw - width) / 2));
+		const top = Math.max(0, Math.round((sh - height) / 2));
+
+		const features = "chrome,dialog=no,resizable"
+			+ ",width=" + width + ",height=" + height
+			+ ",left=" + left + ",top=" + top;
+
 		let w = null;
 
 		try {

@@ -455,30 +455,75 @@ function installDock(win) {
  * 文献列表的工具栏在 PDF 标签页里不可见，所以阅读器里必须另有一个入口。
  */
 function registerReaderUI() {
-	if (!Zotero.Reader || typeof Zotero.Reader.registerEventListener !== "function") {
-		log("Zotero.Reader.registerEventListener 不可用，阅读器内不显示入口");
-		return;
-	}
+	if (!Zotero.Reader) return;
 
-	Zotero.Reader.registerEventListener("renderToolbar", (event) => {
+	const handler = (event) => {
 		try {
+			if (event.reader) injectReaderButton(event.reader);
+
+			// 官方 append 通道也走一遍（不同版本只认其中一种）
 			const doc = event.doc;
-			if (!doc || doc.getElementById("paperloom-reader-btn")) return;
-
-			const btn = doc.createElement("button");
-			btn.id = "paperloom-reader-btn";
-			btn.className = "toolbar-button";
-			btn.textContent = "PaperLoom";
-			btn.title = "显示 / 隐藏右侧 PaperLoom 面板";
-			btn.addEventListener("click", () => toggleDock(Zotero.getMainWindow()));
-
-			if (typeof event.append === "function") event.append(btn);
-			else doc.querySelector(".toolbar")?.appendChild(btn);
+			if (doc && !doc.getElementById("paperloom-reader-btn") && typeof event.append === "function") {
+				const btn = makeReaderButton(doc);
+				if (btn) event.append(btn);
+			}
 		}
 		catch (e) {
 			log("阅读器工具栏按钮注入失败: " + e);
 		}
-	}, PLUGIN_ID);
+	};
+
+	if (typeof Zotero.Reader.registerEventListener === "function") {
+		Zotero.Reader.registerEventListener("renderToolbar", handler, PLUGIN_ID);
+	}
+
+	// 已经打开的 reader 不会再触发 renderToolbar，延迟补两次
+	const sweep = () => {
+		try {
+			for (const r of (Zotero.Reader._readers || [])) injectReaderButton(r);
+		}
+		catch (e) { /* ignore */ }
+	};
+	setTimeout(sweep, 2000);
+	setTimeout(sweep, 8000);
+}
+
+function makeReaderButton(doc) {
+	if (!doc || doc.getElementById("paperloom-reader-btn")) return null;
+
+	const btn = doc.createElement("button");
+	btn.id = "paperloom-reader-btn";
+	btn.className = "toolbar-button";
+	btn.textContent = "PaperLoom";
+	btn.title = "显示 / 隐藏右侧 PaperLoom 面板";
+	btn.style.cssText = "height:26px;padding:0 10px;margin:0 6px;border:1px solid #c9c9c9;border-radius:6px;"
+		+ "background:#fff;color:#333;font-size:12px;cursor:pointer;line-height:24px;";
+	btn.addEventListener("click", () => toggleDock(Zotero.getMainWindow()));
+	return btn;
+}
+
+/** 直接往 reader 的工具栏里塞按钮（已打开的 reader 只能走这条路） */
+function injectReaderButton(reader) {
+	try {
+		const win = reader._iframeWindow && (reader._iframeWindow.wrappedJSObject || reader._iframeWindow);
+		const doc = win && win.document;
+		if (!doc || doc.getElementById("paperloom-reader-btn")) return;
+
+		const btn = makeReaderButton(doc);
+		if (!btn) return;
+
+		// 优先放进工具栏右侧的 .end 容器（AI Sidebar 也挂这里），否则附到工具栏末尾
+		const end = doc.querySelector(".toolbar > .end") || doc.querySelector(".toolbar .end");
+		if (end && typeof end.prepend === "function") {
+			end.prepend(btn);
+			return;
+		}
+		const toolbar = doc.querySelector(".toolbar") || doc.getElementById("toolbarContainer");
+		if (toolbar) toolbar.appendChild(btn);
+	}
+	catch (e) {
+		log("reader 按钮注入失败: " + e);
+	}
 }
 
 /**
@@ -598,7 +643,20 @@ const TAB_SPECS = {
  */
 function openSettings(win) {
 	const url = "chrome://paperloom/content/settings.xhtml";
-	const features = "chrome,dialog=no,resizable,centerscreen,width=700,height=700";
+
+	// 关键：把 left/top 直接算好写进 features，交给窗口管理器在创建时定位。
+	// 只写 centerscreen 在很多 Windows 环境里会被忽略，窗口就贴在左上角。
+	const sw = (win.screen && win.screen.availWidth) || 1920;
+	const sh = (win.screen && win.screen.availHeight) || 1080;
+	const width = Math.min(700, sw - 80);
+	const height = Math.min(700, sh - 80);
+	const left = Math.max(0, Math.round((sw - width) / 2));
+	const top = Math.max(0, Math.round((sh - height) / 2));
+
+	const features = "chrome,dialog=no,resizable"
+		+ ",width=" + width + ",height=" + height
+		+ ",left=" + left + ",top=" + top;
+
 	let w = null;
 
 	try {
