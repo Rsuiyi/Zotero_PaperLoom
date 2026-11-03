@@ -215,23 +215,35 @@
 	}
 
 	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */
-	function centerWindow(w) {
+	function centerWindow(w, sizes) {
 		if (!w) return;
+		const wantW = (sizes && sizes.width) || 680;
+		const wantH = (sizes && sizes.height) || 700;
 		let tries = 0;
+
 		const timer = window.setInterval(() => {
 			tries++;
 			try {
-				const sw = w.screen.availWidth;
-				const sh = w.screen.availHeight;
-				if (sw && sh && w.outerWidth && w.outerHeight) {
+				const sw = (w.screen && w.screen.availWidth) || 0;
+				const sh = (w.screen && w.screen.availHeight) || 0;
+				if (!sw || !sh) return;
+
+				const cw = Math.min(wantW, sw - 80);
+				const ch = Math.min(wantH, sh - 80);
+				try { w.resizeTo(cw, ch); } catch (e) { /* ignore */ }
+
+				if (typeof w.centerWindowOnScreen === "function") {
+					w.centerWindowOnScreen();
+				}
+				else {
 					w.moveTo(
-						Math.max(0, Math.round((sw - w.outerWidth) / 2)),
-						Math.max(0, Math.round((sh - w.outerHeight) / 2))
+						Math.max(0, Math.round((sw - cw) / 2)),
+						Math.max(0, Math.round((sh - ch) / 2))
 					);
 				}
 			}
 			catch (e) { /* 窗口还没就绪 */ }
-			if (tries > 20) window.clearInterval(timer);
+			if (tries > 30) window.clearInterval(timer);
 		}, 100);
 	}
 
@@ -241,7 +253,7 @@
 			const w = window.openDialog(url, "paperloom-provider",
 				"chrome,centerscreen,resizable,width=680,height=700",
 				{ providerId: providerId || "", Zotero: Zotero, PaperLoom: PL });
-			centerWindow(w);
+			centerWindow(w, { width: 680, height: 700 });
 		}
 		catch (e) {
 			setStatus("打开服务商窗口失败：" + e, "err");
