@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8" />
+	<title>PaperLoom 记忆卡片</title>
+	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
+</head>
+<body>
+	<div class="pl-toolbar">
+		<strong>它记住了你什么</strong>
+		<span class="pl-stats" id="pl-mem-stats"></span>
+		<span style="flex:1"></span>
+		<input type="text" id="pl-mem-key" placeholder="key，如 style.length" style="width:170px" />
+		<input type="text" id="pl-mem-value" placeholder="value，如 short" style="width:130px" />
+		<button id="pl-mem-add" class="pl-primary">手动添加</button>
+		<button id="pl-mem-refresh">刷新</button>
+	</div>
+
+	<div class="pl-warning">
+		手动添加或编辑的记忆会被锁定为 <strong>explicit / confidence 1.00</strong>，此后不会被对话推断覆盖。
+	</div>
+
+	<div id="pl-mem-list"></div>
+	<div class="pl-empty" id="pl-mem-empty" style="display:none">
+		还没有记住关于你的任何事。去侧栏对话几轮，或在上方手动添加一条。
+	</div>
+
+	<script src="chrome://paperloom/content/memory.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8" />
+	<title>PaperLoom 知识图谱</title>
+	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
+</head>
+<body>
+	<div class="pl-toolbar">
+		<strong>知识图谱</strong>
+		<span class="pl-stats" id="pl-graph-stats"></span>
+		<span style="flex:1"></span>
+		<label class="pl-row" title="图上立刻只剩真正连接多篇文献的骨架">
+			<input type="checkbox" id="pl-cross-only" />
+			<span>只显示跨论文概念</span>
+		</label>
+		<label class="pl-row">
+			<input type="checkbox" id="pl-show-papers" checked="checked" />
+			<span>显示论文节点</span>
+		</label>
+		<button id="pl-graph-refresh">刷新</button>
+		<button id="pl-graph-fit">重置视图</button>
+	</div>
+
+	<div class="pl-graph-layout">
+		<div id="pl-graph-canvas-wrap">
+			<canvas id="pl-graph-canvas"></canvas>
+		</div>
+		<div class="pl-graph-side" id="pl-graph-side">
+			<div class="pl-legend">
+				<span style="color:#2e7fe0">论文</span>
+				<span style="color:#c8792a">概念</span>
+				<span style="color:#2d9c5a">跨论文概念</span>
+			</div>
+			<div class="pl-empty" id="pl-graph-hint">点击一个节点查看证据卡片。</div>
+			<div id="pl-graph-detail"></div>
+		</div>
+	</div>
+
+	<script src="chrome://paperloom/content/graph.js"></script>
+</body>
+</html>
