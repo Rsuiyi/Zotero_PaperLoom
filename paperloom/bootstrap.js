@@ -539,43 +539,6 @@ function injectReaderButton(reader) {
  * centerscreen 在部分窗口管理器/多屏环境下不生效，窗口会贴在上沿；
  * 这里在打开后再手动纠一次位置。
  */
-/**
- * 从主窗口侧读取新窗口的几何信息并落盘。
- * 之所以放在这里：子窗口自己可能拿不到 Zotero / 存储，写不出日志。
- */
-function probeOpenedWindow(win, w) {
-	const samples = [];
-	let i = 0;
-	const timer = win.setInterval(() => {
-		i++;
-		try {
-			samples.push({
-				t: Date.now(),
-				pos: [w.screenX, w.screenY],
-				outer: [w.outerWidth, w.outerHeight],
-				inner: [w.innerWidth, w.innerHeight],
-				avail: [w.screen.availWidth, w.screen.availHeight],
-				availPos: [w.screen.availLeft, w.screen.availTop],
-				screen: [w.screen.width, w.screen.height],
-				href: String(w.location && w.location.href || "")
-			});
-		}
-		catch (e) { /* 窗口已关闭 */ }
-
-		try {
-			if (PaperLoom && PaperLoom.Storage) {
-				PaperLoom.Storage.writeJSON("windowlog.json", {
-					at: new Date().toISOString(),
-					samples: samples
-				});
-			}
-		}
-		catch (e) { /* ignore */ }
-
-		if (i > 4) win.clearInterval(timer);
-	}, 500);
-}
-
 function centerDialog(win, w, sizes) {
 	if (!w) return;
 
@@ -689,49 +652,19 @@ const TAB_SPECS = {
 function openSettings(win) {
 	const url = "chrome://paperloom/content/settings.xhtml";
 
-	// 关键：把 left/top 直接算好写进 features，交给窗口管理器在创建时定位。
-	// 只写 centerscreen 在很多 Windows 环境里会被忽略，窗口就贴在左上角。
-	const sw = (win.screen && win.screen.availWidth) || 1920;
-	const sh = (win.screen && win.screen.availHeight) || 1080;
-	const width = Math.min(700, sw - 80);
-	const height = Math.min(700, sh - 80);
-	const left = Math.max(0, Math.round((sw - width) / 2));
-	const top = Math.max(0, Math.round((sh - height) / 2));
-
-	const features = "chrome,dialog=no,resizable,centerscreen"
-		+ ",width=" + width + ",height=" + height
-		+ ",left=" + left + ",top=" + top;
-
-	let w = null;
+	// 只走 openDialog：Zotero 自己在用这个 API，可靠。
+	// 之前叠了 window.open / Services.ww.openWindow 三条回退，会额外造窗口并抢焦点。
+	const features = "chrome,dialog=no,resizable,centerscreen,width=700,height=700";
 
 	try {
-		if (typeof win.openDialog === "function") {
-			w = win.openDialog(url, "paperloom-settings", features,
-				{ Zotero: Zotero, PaperLoom: PaperLoom });
-		}
+		const w = win.openDialog(url, "paperloom-settings", features,
+			{ Zotero: Zotero, PaperLoom: PaperLoom });
+		if (w) return;
 	}
-	catch (e) { w = null; }
-
-	if (!w) {
-		try { w = win.open(url, "paperloom-settings", features); }
-		catch (e) { w = null; }
+	catch (e) {
+		log("openDialog 打开设置失败: " + e);
 	}
 
-	if (!w) {
-		try {
-			w = Services.ww.openWindow(win, url, "paperloom-settings", features, null);
-		}
-		catch (e) { w = null; }
-	}
-
-	if (w) {
-		// 位置已由 features 的 left/top + centerscreen 决定。
-		// 这里绝对不能再 resizeTo/moveTo：每次 resize 都会被 Windows 重新吸附到上沿。
-		probeOpenedWindow(win, w);
-		return;
-	}
-
-	log("所有窗口打开方式都失败，退回 Tab");
 	openTab(win, "settings");
 }
 

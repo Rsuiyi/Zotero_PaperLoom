@@ -475,6 +475,15 @@ function section(t) { console.log("\n" + t); }
 		await PL.GraphStore.removeNode(renamed.nodeId);
 		g = await PL.GraphStore.load();
 		check("删除节点生效", !g.nodes.some(n => n.label === "改名后概念"));
+
+		// 批量删除（框选后用）
+		await PL.GraphStore.upsertNode({ type: "concept", label: "批量甲" });
+		await PL.GraphStore.upsertNode({ type: "concept", label: "批量乙" });
+		g = await PL.GraphStore.load();
+		const batch = g.nodes.filter(n => /^批量[甲乙]$/.test(n.label)).map(n => n.nodeId);
+		await PL.GraphStore.removeNodes(batch);
+		g = await PL.GraphStore.load();
+		check("★ 批量删除节点生效", !g.nodes.some(n => /^批量[甲乙]$/.test(n.label)));
 	}
 
 	section("14. 用量统计与系统提示词");

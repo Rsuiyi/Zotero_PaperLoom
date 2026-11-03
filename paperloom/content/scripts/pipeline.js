@@ -550,6 +550,20 @@ PaperLoom.Pipeline = (function () {
 	}
 
 	/**
+	 * 删除对话历史（不是清屏，是真正删掉落盘的记录）。
+	 * paperId 为空时删除全部。
+	 * @returns {Promise<number>} 删掉的轮数
+	 */
+	async function clearTurns(paperId) {
+		const store = await PaperLoom.Storage.readJSON(TURNS_FILE, null)
+			|| { version: S.SCHEMA_VERSION, turns: [] };
+		const before = store.turns.length;
+		store.turns = paperId ? store.turns.filter(t => t.paperId !== paperId) : [];
+		await PaperLoom.Storage.writeJSON(TURNS_FILE, store);
+		return before - store.turns.length;
+	}
+
+	/**
 	 * 手动重建图谱：对选中的论文跑概念 + 关系抽取。
 	 * 关键工程细节：必须把已有节点列表喂给模型，要求优先复用现有 nodeId，
 	 * 跨论文连接就是在这里真正形成的。
@@ -667,7 +681,7 @@ ${JSON.stringify(existing)}
 	}
 
 	return {
-		ask, rebuildGraph, recentTurns, saveTurn, ensurePaperDocs,
+		ask, rebuildGraph, recentTurns, clearTurns, saveTurn, ensurePaperDocs,
 		libraryChunks, buildMessages, normalizeGraphDelta, pickRepresentativeChunks
 	};
 })();

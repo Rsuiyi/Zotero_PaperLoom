@@ -348,9 +348,15 @@ PaperLoom.GraphStore = (function () {
 	}
 
 	async function removeNode(nodeId) {
+		return removeNodes([nodeId]);
+	}
+
+	/** 批量删除：框选后一次删掉，避免逐条读写 */
+	async function removeNodes(nodeIds) {
+		const set = new Set(nodeIds || []);
 		const graph = await load();
-		graph.nodes = graph.nodes.filter(n => n.nodeId !== nodeId);
-		graph.edges = graph.edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+		graph.nodes = graph.nodes.filter(n => !set.has(n.nodeId));
+		graph.edges = graph.edges.filter(e => !set.has(e.source) && !set.has(e.target));
 		await save(graph);
 		return graph;
 	}
@@ -377,6 +383,6 @@ PaperLoom.GraphStore = (function () {
 	return {
 		load, save, applyGraphDelta, neighbors, findConceptsByQuery,
 		alignConcept, similarity, indexNodes, stats, clear,
-		upsertNode, renameNode, removeNode, upsertEdge, removeEdge
+		upsertNode, renameNode, removeNode, removeNodes, upsertEdge, removeEdge
 	};
 })();

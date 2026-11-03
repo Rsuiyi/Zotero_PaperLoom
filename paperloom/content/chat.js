@@ -88,6 +88,7 @@
 		els.input.addEventListener("keydown", onKeyDown);
 		els.input.addEventListener("input", onInput);
 		$("pl-btn-clear").addEventListener("click", () => { els.messages.innerHTML = ""; });
+		$("pl-btn-clear-history").addEventListener("click", clearHistory);
 		$("pl-btn-graph").addEventListener("click", () => openPanel("graph"));
 		$("pl-btn-memory").addEventListener("click", () => openPanel("memory"));
 		$("pl-btn-settings").addEventListener("click", () => openPanel("settings"));
@@ -136,6 +137,36 @@
 			setItem(await Zotero.Items.getAsync(id));
 		}
 		catch (e) { /* ignore */ }
+	}
+
+	/**
+	 * 正在阅读的论文：如果当前标签页是一个打开的 PDF，就用它的父条目。
+	 * 这样"打开论文 PDF 后再问 AI"会以正在看的那篇为准，而不是列表里碰巧选中的条目。
+	 */
+	function activePaperItem() {
+		try {
+			const win = Zotero.getMainWindow ? Zotero.getMainWindow() : null;
+			const tabs = win && win.Zotero_Tabs;
+			let reader = null;
+
+			if (tabs && tabs.selectedID && Zotero.Reader && Zotero.Reader.getByTabID) {
+				reader = Zotero.Reader.getByTabID(tabs.selectedID);
+			}
+
+			if (!reader) {
+				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+				reader = readers[readers.length - 1] || null;
+			}
+			if (!reader || !reader.itemID) return null;
+
+			const att = Zotero.Items.get(reader.itemID);
+			if (!att) return null;
+			if (att.parentItemID) return Zotero.Items.get(att.parentItemID) || null;
+			return (att.isRegularItem && att.isRegularItem()) ? att : null;
+		}
+		catch (e) {
+			return null;
+		}
 	}
 
 	/** 用户可能在列表里选中的是 PDF 附件：统一换成它的父条目 */
@@ -201,6 +232,25 @@
 		}
 	}
 
+	/** 真正删除落盘的历史（清屏只是清显示） */
+	async function clearHistory() {
+		const label = currentItem ? "当前论文" : "全库";
+		let ok = true;
+		try { ok = window.confirm("删除" + label + "的全部对话历史？此操作不可撤销。"); }
+		catch (e) { /* 无 confirm 上下文时直接执行 */ }
+		if (!ok) return;
+
+		try {
+			const removed = await PL.Pipeline.clearTurns(currentItem ? currentItem.key : null);
+			els.messages.innerHTML = "";
+			historyKey = null;
+			renderIntro("历史已删除（" + removed + " 轮）。");
+		}
+		catch (e) {
+			showError("删除历史失败：" + e);
+		}
+	}
+
 	// ------------------------------------------------------------ 发送
 
 	function onKeyDown(ev) {
@@ -217,10 +267,13 @@
 		const query = els.input.value.trim();
 		if (!query) return;
 
-		if (mode !== "library" && !currentItem) {
+		let askItem = mode === "library" ? null : (activePaperItem() || currentItem);
+
+		if (mode !== "library" && !askItem) {
 			tryPickSelectedItem();
-			if (!currentItem) {
-				showError("请先在文库中选中一篇论文。");
+			askItem = activePaperItem() || currentItem;
+			if (!askItem) {
+				showError("请先在文库中选中一篇论文，或打开它的 PDF。");
 				return;
 			}
 		}
@@ -235,7 +288,7 @@
 		try {
 			const result = await PL.Pipeline.ask({
 				query: stripRefMarkers(query),
-				item: mode === "library" ? null : currentItem,
+				item: askItem,
 				referencedItems: referenced.slice(),
 				onProgress: (stage, info) => {
 					pending.textContent = stageLabel(stage, info);

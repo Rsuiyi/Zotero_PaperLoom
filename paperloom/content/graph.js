@@ -49,10 +49,12 @@
 	let view = { nodes: [], edges: [] };     // 过滤后的视图
 	let sim = null;
 	let camera = { x: 0, y: 0, scale: 1 };
-	let selected = null;
+	let selected = null;                    // 详情面板展示的主节点
+	let selection = new Set();              // 多选集合（nodeId）
 	let hover = null;
 	let dragging = null;
 	let panning = null;
+	let box = null;                         // 框选矩形 {x0,y0,x1,y1}
 
 	const COLORS = {
 		paper: "#2e7fe0",
@@ -97,6 +99,21 @@
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
 		$("pl-graph-add-node").addEventListener("click", addConcept);
+
+		// Del / Backspace 删除选中节点；Esc 清空选择
+		window.addEventListener("keydown", (ev) => {
+			if (ev.key === "Delete" || ev.key === "Backspace") {
+				if (selection.size) {
+					ev.preventDefault();
+					deleteSelection();
+				}
+			}
+			else if (ev.key === "Escape") {
+				selection = new Set();
+				selected = null;
+				draw();
+			}
+		});
 
 		canvas.addEventListener("mousedown", onMouseDown);
 		canvas.addEventListener("mousemove", onMouseMove);
@@ -397,7 +414,7 @@
 			}
 			ctx.fillStyle = color;
 			ctx.fill();
-			if (selected && selected.nodeId === n.nodeId) {
+			if (selection.has(n.nodeId)) {
 				ctx.lineWidth = 2.5;
 				ctx.strokeStyle = "#fff";
 				ctx.stroke();
@@ -412,7 +429,7 @@
 			}
 
 			// 标签：节点够大或被选中/悬停时才画，避免糊成一片
-			if (r > 7 || (selected && highlightIds.has(n.nodeId)) || (hover && hover.nodeId === n.nodeId)) {
+			if (r > 7 || highlightIds.has(n.nodeId) || (hover && hover.nodeId === n.nodeId)) {
 				const label = String(n.label || "").slice(0, 18);
 				ctx.font = (n.type === "paper" ? "600 " : "") + "11px sans-serif";
 				ctx.textAlign = "center";
@@ -424,6 +441,19 @@
 				ctx.fillText(label, p.x, p.y + r + 4);
 			}
 			ctx.globalAlpha = 1;
+		}
+
+		// 框选矩形
+		if (box) {
+			const x = Math.min(box.x0, box.x1), y = Math.min(box.y0, box.y1);
+			const bw = Math.abs(box.x1 - box.x0), bh = Math.abs(box.y1 - box.y0);
+			ctx.save();
+			ctx.fillStyle = "rgba(46,127,224,0.12)";
+			ctx.strokeStyle = "rgba(46,127,224,0.85)";
+			ctx.lineWidth = 1;
+			ctx.fillRect(x, y, bw, bh);
+			ctx.strokeRect(x, y, bw, bh);
+			ctx.restore();
 		}
 	}
 
@@ -445,17 +475,38 @@
 		const rect = canvas.getBoundingClientRect();
 		const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
 		const node = pick(sx, sy);
+
+		// 中键 / Alt 拖拽 = 平移画布（左键留给框选）
+		if (ev.button === 1 || ev.altKey) {
+			panning = { x: sx, y: sy, cx: camera.x, cy: camera.y };
+			return;
+		}
+
 		if (node) {
-			dragging = node;
-			selected = node;
+			if (ev.shiftKey) {
+				// shift 点选：加入 / 移出多选
+				if (selection.has(node.nodeId)) selection.delete(node.nodeId);
+				else selection.add(node.nodeId);
+				selected = node;
+			}
+			else {
+				selection = new Set([node.nodeId]);
+				selected = node;
+				dragging = node;
+			}
 			showDetail(node);
 			draw();
+			return;
 		}
-		else {
-			panning = { x: sx, y: sy, cx: camera.x, cy: camera.y };
+
+		// 空白处按下：开始框选；不按 shift 则清空已有选择
+		if (!ev.shiftKey) {
+			selection = new Set();
 			selected = null;
-			draw();
+			$("pl-graph-detail").innerHTML = "";
 		}
+		box = { x0: sx, y0: sy, x1: sx, y1: sy };
+		draw();
 	}
 
 	function onMouseMove(ev) {
@@ -476,6 +527,12 @@
 			draw();
 			return;
 		}
+		if (box) {
+			box.x1 = sx;
+			box.y1 = sy;
+			draw();
+			return;
+		}
 		const node = pick(sx, sy);
 		if ((node && node.nodeId) !== (hover && hover.nodeId)) {
 			hover = node;
@@ -485,8 +542,48 @@
 	}
 
 	function onMouseUp() {
+		if (box) {
+			const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1);
+			const y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
+
+			// 太小的矩形视为普通单击，不做框选
+			if (x1 - x0 > 4 && y1 - y0 > 4) {
+				for (const n of view.nodes) {
+					const p = toScreen(n);
+					if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
+						selection.add(n.nodeId);
+					}
+				}
+				if (selection.size) {
+					const lastId = Array.from(selection)[selection.size - 1];
+					const last = view.nodes.find(n => n.nodeId === lastId);
+					if (last) { selected = last; showDetail(last); }
+				}
+			}
+			box = null;
+			draw();
+		}
+
 		dragging = null;
 		panning = null;
+	}
+
+	/** Del / Backspace：删除所有选中的节点（先确认） */
+	async function deleteSelection() {
+		if (!selection.size) return;
+		if (!window.confirm("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。")) return;
+
+		try {
+			await PL.GraphStore.removeNodes(Array.from(selection));
+			selection = new Set();
+			selected = null;
+			$("pl-graph-detail").innerHTML = "";
+			$("pl-graph-hint").style.display = "block";
+			await load();
+		}
+		catch (e) {
+			window.alert("删除失败：" + e);
+		}
 	}
 
 	function onWheel(ev) {
