@@ -1,0 +1,252 @@
+{
+	"_comment": "PaperLoom 评测集。四类：single_fact / cross_paper / concept / preference。",
+	"_howto": [
+		"1. 把 papers 里的 paperId 换成你 demo 库里真实的条目 key（Zotero 条目右键 → 导出 → 或在条目面板看 URI 末段）。",
+		"2. expectIntent 用于自动校验意图判定；expectMinPapers 用于校验跨篇问题是否真的跨了篇。",
+		"3. 带 memory 字段的条目会以虚拟记忆注入（不写真实记忆库），用于 A/B 对照偏好遵循。",
+		"4. 问题文本按你自己的 demo 论文改写——这里给的是模板，照搬到不相关的库上结果没有意义。"
+	],
+
+	"papers": {
+		"P1": { "paperId": "REPLACE_KEY_1", "note": "主论文，侧栏对话默认上下文" },
+		"P2": { "paperId": "REPLACE_KEY_2", "note": "与 P1 同主题，存在支持/延伸关系" },
+		"P3": { "paperId": "REPLACE_KEY_3", "note": "与 P1 存在分歧，用于跨篇矛盾检测" },
+		"P4": { "paperId": "REPLACE_KEY_4", "note": "演示时新导入的第 4 篇" }
+	},
+
+	"queries": [
+		{
+			"id": "SF-01",
+			"category": "single_fact",
+			"paper": "P1",
+			"query": "这篇论文用的是什么数据集，规模多大？",
+			"expectIntent": "single_fact",
+			"expectCitation": true,
+			"rubric": "答案给出数据集名称与规模，且引用能定位到实验设置所在页"
+		},
+		{
+			"id": "SF-02",
+			"category": "single_fact",
+			"paper": "P1",
+			"query": "作者提出的方法分几个阶段？每个阶段做什么？",
+			"expectIntent": "single_fact",
+			"expectCitation": true,
+			"rubric": "阶段数与论文一致，引用落在 method 段"
+		},
+		{
+			"id": "SF-03",
+			"category": "single_fact",
+			"paper": "P1",
+			"query": "这篇论文报告的主要指标提升了多少？",
+			"expectIntent": "single_fact",
+			"expectCitation": true,
+			"rubric": "数值与原文一致，引用落在结果表附近页"
+		},
+		{
+			"id": "SF-04",
+			"category": "single_fact",
+			"paper": "P2",
+			"query": "作者在局限性部分承认了哪些问题？",
+			"expectIntent": "single_fact",
+			"expectCitation": true,
+			"rubric": "引用落在 discussion/limitation 段"
+		},
+		{
+			"id": "SF-05",
+			"category": "single_fact",
+			"paper": "P3",
+			"query": "这篇的实验是在什么硬件环境下跑的？",
+			"expectIntent": "single_fact",
+			"expectCitation": true,
+			"rubric": "若原文未提，应回答「提供的材料里没有涉及」而不是编造"
+		},
+		{
+			"id": "SF-06",
+			"category": "single_fact",
+			"paper": "P1",
+			"query": "这篇论文的量子退火求解器用的是哪家厂商的设备？",
+			"expectIntent": "single_fact",
+			"expectCitation": false,
+			"expectRefusal": true,
+			"rubric": "★ 抗幻觉陷阱题：原文大概率没有此内容，必须明确说没有涉及，不得编造"
+		},
+
+		{
+			"id": "CP-01",
+			"category": "cross_paper",
+			"paper": "P1",
+			"refs": ["P3"],
+			"query": "这两篇在核心方法上的结论一致吗？谁的证据更强？",
+			"expectIntent": "cross_paper",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "必须同时引用两篇；指出分歧点而不是各说一遍"
+		},
+		{
+			"id": "CP-02",
+			"category": "cross_paper",
+			"paper": "P1",
+			"query": "库里还有哪些论文支持这篇的主要论点？",
+			"expectIntent": "cross_paper",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "跨篇检索生效，引用来自 ≥2 篇"
+		},
+		{
+			"id": "CP-03",
+			"category": "cross_paper",
+			"paper": "P1",
+			"refs": ["P2", "P3"],
+			"query": "这三篇在评测方式上各有什么差异？",
+			"expectIntent": "cross_paper",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "逐篇对比评测设置，不混为一谈"
+		},
+		{
+			"id": "CP-04",
+			"category": "cross_paper",
+			"paper": "P4",
+			"query": "这篇和库里已有的论文有没有矛盾的地方？",
+			"expectIntent": "cross_paper",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "能定位到具体矛盾对，而非泛泛说「角度不同」"
+		},
+		{
+			"id": "CP-05",
+			"category": "cross_paper",
+			"paper": "P1",
+			"query": "库里有没有论文研究过水下声呐目标识别？和这篇什么关系？",
+			"expectIntent": "cross_paper",
+			"expectMinPapers": 0,
+			"expectRefusal": true,
+			"rubric": "★ 跨篇不硬凑陷阱题：库里没有该主题时，必须说明没有相关文献"
+		},
+		{
+			"id": "CP-06",
+			"category": "cross_paper",
+			"paper": "P2",
+			"refs": ["P1"],
+			"query": "如果用 P1 的方法替换这篇的模块，会有什么问题？",
+			"expectIntent": "cross_paper",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "推理题：允许推断但必须标明哪部分是推断、哪部分有原文支撑"
+		},
+
+		{
+			"id": "CO-01",
+			"category": "concept",
+			"paper": "P1",
+			"query": "论文里反复出现的那个核心概念到底是什么意思？",
+			"expectIntent": "concept",
+			"expectCitation": true,
+			"rubric": "用论文自己的定义解释，而不是通用百科式回答"
+		},
+		{
+			"id": "CO-02",
+			"category": "concept",
+			"paper": "P1",
+			"query": "这个概念和相邻的那个概念有什么区别？",
+			"expectIntent": "concept",
+			"expectCitation": true,
+			"rubric": "能辨析边界，最好引用图谱里的 relates 边"
+		},
+		{
+			"id": "CO-03",
+			"category": "concept",
+			"paper": "P2",
+			"query": "为什么要引入这个机制？解决了什么问题？",
+			"expectIntent": "concept",
+			"expectCitation": true,
+			"rubric": "动机链条清楚，引用落在 intro 或 method 开头"
+		},
+		{
+			"id": "CO-04",
+			"category": "concept",
+			"paper": "P3",
+			"query": "这个术语在不同论文里是一个意思吗？",
+			"expectIntent": "concept",
+			"expectCitation": true,
+			"expectMinPapers": 2,
+			"rubric": "★ 考察概念对齐：应指出同名异义或别名合并情况"
+		},
+		{
+			"id": "CO-05",
+			"category": "concept",
+			"paper": "P1",
+			"query": "用一句话解释这篇的核心思路。",
+			"expectIntent": "concept",
+			"expectCitation": true,
+			"rubric": "简洁且不丢关键限定条件"
+		},
+		{
+			"id": "CO-06",
+			"category": "concept",
+			"paper": "P4",
+			"query": "这篇提出的新概念在库里之前出现过吗？",
+			"expectIntent": "concept",
+			"rubric": "考察图谱复用：应能说出是否已有同义节点"
+		},
+
+		{
+			"id": "PF-01",
+			"category": "preference",
+			"paper": "P1",
+			"query": "这篇我没读过，讲简单点。",
+			"expectIntent": "single_fact",
+			"expectMemoryWrite": ["familiarity", "style.length"],
+			"rubric": "★ 应写入 familiarity.<P1>=unread 与 style.length=short，并在记忆面板可见"
+		},
+		{
+			"id": "PF-02",
+			"category": "preference",
+			"paper": "P1",
+			"query": "再讲一遍这篇的方法。",
+			"memory": [
+				{ "key": "style.length", "value": "short", "confidence": 1.0, "origin": "explicit" }
+			],
+			"abBaseline": true,
+			"expectIntent": "single_fact",
+			"rubric": "★ A/B 对照主项：注入 style.length=short 后，答案长度应显著短于无记忆组"
+		},
+		{
+			"id": "PF-03",
+			"category": "preference",
+			"paper": "P1",
+			"query": "这个公式是怎么推出来的？",
+			"memory": [
+				{ "key": "style.formula", "value": "avoid", "confidence": 1.0, "origin": "explicit" }
+			],
+			"expectIntent": "single_fact",
+			"rubric": "已声明不要公式时，应改用文字叙述思路，不堆公式"
+		},
+		{
+			"id": "PF-04",
+			"category": "preference",
+			"paper": "P2",
+			"query": "你记得我什么偏好？",
+			"expectIntent": "meta",
+			"rubric": "★ 元问题：应如实列出当前记忆，不编造没记过的偏好"
+		},
+		{
+			"id": "PF-05",
+			"category": "preference",
+			"paper": "P1",
+			"query": "以后别用公式解释了。",
+			"expectIntent": "single_fact",
+			"expectMemoryWrite": ["style.formula"],
+			"rubric": "显式指令应写入 style.formula=avoid"
+		},
+		{
+			"id": "PF-06",
+			"category": "preference",
+			"paper": "P3",
+			"query": "这篇我很熟，直接说结论。",
+			"expectIntent": "single_fact",
+			"expectMemoryWrite": ["familiarity"],
+			"rubric": "应写入 familiarity.<P3>=read，且回答跳过背景铺垫"
+		}
+	]
+}
