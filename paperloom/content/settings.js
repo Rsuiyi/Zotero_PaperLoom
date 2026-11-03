@@ -49,6 +49,14 @@
 	const Zotero = pickZotero();
 	const PL = pickPaperLoom(Zotero);
 
+	// 子窗口（新增服务商）可能是用 window.open 打开的，拿不到 arguments，
+	// 于是通过 opener 上的全局引用把 Zotero / 领域层传下去。
+	try {
+		window.__paperloomZotero = Zotero;
+		window.__paperloomPL = PL;
+	}
+	catch (e) { /* ignore */ }
+
 	const $ = (id) => document.getElementById(id);
 
 	function setStatus(text, kind) {
@@ -248,16 +256,31 @@
 	}
 
 	function openProviderDialog(providerId) {
-		const url = "chrome://paperloom/content/provider.xhtml";
+		// providerId 同时放进 query：即使窗口打开方式不支持传参（window.open），编辑也能正确加载
+		const url = "chrome://paperloom/content/provider.xhtml"
+			+ (providerId ? ("?id=" + encodeURIComponent(providerId)) : "");
+		const features = "chrome,dialog=no,resizable,centerscreen,width=680,height=700";
+		let w = null;
+
 		try {
-			const w = window.openDialog(url, "paperloom-provider",
-				"chrome,centerscreen,resizable,width=680,height=700",
-				{ providerId: providerId || "", Zotero: Zotero, PaperLoom: PL });
+			if (typeof window.openDialog === "function") {
+				w = window.openDialog(url, "paperloom-provider", features,
+					{ providerId: providerId || "", Zotero: Zotero, PaperLoom: PL });
+			}
+		}
+		catch (e) { w = null; }
+
+		if (!w) {
+			try { w = window.open(url, "paperloom-provider", features); }
+			catch (e) { w = null; }
+		}
+
+		if (w) {
 			centerWindow(w, { width: 680, height: 700 });
+			return;
 		}
-		catch (e) {
-			setStatus("打开服务商窗口失败：" + e, "err");
-		}
+
+		setStatus("打开服务商窗口失败", "err");
 	}
 
 	// ------------------------------------------------------------------ 模型下拉框

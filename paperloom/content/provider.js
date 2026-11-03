@@ -15,6 +15,7 @@
 	function pickZotero() {
 		const candidates = [
 			() => ARG.Zotero,
+			() => (window.opener && window.opener.__paperloomZotero),
 			() => (window.opener && window.opener.Zotero),
 			() => (window.top && window.top.Zotero),
 			() => window.Zotero
@@ -32,6 +33,7 @@
 	function pickPaperLoom(z) {
 		const candidates = [
 			() => ARG.PaperLoom,
+			() => (window.opener && window.opener.__paperloomPL),
 			() => (z && z.PaperLoom)
 		];
 		for (const get of candidates) {
@@ -48,8 +50,11 @@
 	const PL = pickPaperLoom(Zotero);
 	const $ = (id) => document.getElementById(id);
 
-	/** 正在编辑的服务商 id；空字符串表示新增 */
-	const providerId = String(ARG.providerId || "");
+	/** 正在编辑的服务商 id；空字符串表示新增。窗口不支持传参时从 query 里读 */
+	const providerId = String(
+		ARG.providerId
+		|| (new URLSearchParams(location.search).get("id") || "")
+	);
 
 	/** 当前列表里勾选的模型（从 DOM 读，保证与界面一致） */
 	function checkedModels() {

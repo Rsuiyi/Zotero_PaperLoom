@@ -590,19 +590,44 @@ const TAB_SPECS = {
 	settings: { title: "PaperLoom 设置", src: "chrome://paperloom/content/settings.xhtml" }
 };
 
-/** 独立设置窗口：openDialog 失败时退回 Tab，保证配置入口永远存在 */
+/**
+ * 独立设置窗口。
+ * Zotero 10 / Firefox 140 起 window.openDialog 不一定还在：
+ * 它一旦抛错，旧代码会退回成"标签页"，看起来就是永久贴在内容区上沿。
+ * 这里按 openDialog → window.open → Services.ww.openWindow 依次尝试，都是真窗口。
+ */
 function openSettings(win) {
 	const url = "chrome://paperloom/content/settings.xhtml";
+	const features = "chrome,dialog=no,resizable,centerscreen,width=700,height=700";
+	let w = null;
+
 	try {
-		const w = win.openDialog(url, "paperloom-settings",
-			"chrome,centerscreen,resizable,width=700,height=720",
-			{ Zotero: Zotero, PaperLoom: PaperLoom });
+		if (typeof win.openDialog === "function") {
+			w = win.openDialog(url, "paperloom-settings", features,
+				{ Zotero: Zotero, PaperLoom: PaperLoom });
+		}
+	}
+	catch (e) { w = null; }
+
+	if (!w) {
+		try { w = win.open(url, "paperloom-settings", features); }
+		catch (e) { w = null; }
+	}
+
+	if (!w) {
+		try {
+			w = Services.ww.openWindow(win, url, "paperloom-settings", features, null);
+		}
+		catch (e) { w = null; }
+	}
+
+	if (w) {
 		centerDialog(win, w, { width: 700, height: 700 });
+		return;
 	}
-	catch (e) {
-		log("独立设置窗口打开失败，退回 Tab: " + e);
-		openTab(win, "settings");
-	}
+
+	log("所有窗口打开方式都失败，退回 Tab");
+	openTab(win, "settings");
 }
 
 const openTabIDs = Object.create(null);
