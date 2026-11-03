@@ -10,10 +10,12 @@
 
 	// 同 chat.js：标签页可能在插件启动前被恢复，领域层允许稍后才就绪
 	let Zotero = resolveZotero();
-	let PL = Zotero && Zotero.PaperLoom;
+	let PL = (window.arguments && window.arguments[0] && window.arguments[0].PaperLoom)
+		|| (Zotero && Zotero.PaperLoom);
 
 	function resolveZotero() {
 		const tries = [
+			() => (window.arguments && window.arguments[0] && window.arguments[0].Zotero),
 			() => window.Zotero,
 			() => (window.top && window.top.Zotero),
 			() => (window.parent && window.parent.Zotero),

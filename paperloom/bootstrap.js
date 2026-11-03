@@ -675,6 +675,20 @@ function openTab(win, kind) {
 	const spec = TAB_SPECS[kind];
 	if (!spec) return;
 
+	// 记忆 / 图谱固定用独立窗口：不要塞进 Zotero 的标签栏
+	const WINDOW_ONLY = { graph: true, memory: true };
+	if (WINDOW_ONLY[kind]) {
+		try {
+			win.openDialog(spec.src, "paperloom-" + kind,
+				"chrome,resizable,centerscreen,width=1100,height=760",
+				{ Zotero: Zotero, PaperLoom: PaperLoom });
+			return;
+		}
+		catch (e) {
+			log("独立窗口打开失败，退回标签页: " + e);
+		}
+	}
+
 	const existing = openTabIDs[kind];
 	if (existing && win.Zotero_Tabs) {
 		try {
