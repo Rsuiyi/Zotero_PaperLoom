@@ -15,6 +15,9 @@ pref("extensions.paperloom.apiKey", "");
 pref("extensions.paperloom.chatModel", "");
 pref("extensions.paperloom.extractModel", "");
 
+// 用户附加的系统提示词：拼在默认规则之后，可覆盖回答风格，不能违反证据与引用规则
+pref("extensions.paperloom.systemPrompt", "");
+
 // ⚠ 必须 ≥ 4096：推理模型的 reasoning token 计入 completion，给小了会出现 content 为空。
 pref("extensions.paperloom.maxTokens", 4096);
 pref("extensions.paperloom.temperature", "0.3");

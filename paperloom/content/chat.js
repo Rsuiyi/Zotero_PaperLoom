@@ -290,6 +290,25 @@
 		intent.textContent = intentLabel(result.intent);
 		meta.appendChild(intent);
 
+		// ★ token 用量：输入（缓存命中 / 命中率）· 输出
+		const u = result.usage || (result.turn && result.turn.usage) || null;
+		if (u) {
+			const usage = document.createElement("span");
+			usage.className = "pl-intent-badge";
+			if (u.localCache) {
+				usage.textContent = "本地缓存命中 · 未消耗 token";
+			}
+			else {
+				const rate = u.input > 0 ? Math.round((u.cached / u.input) * 1000) / 10 : 0;
+				usage.textContent = "输入 " + fmtTokens(u.input)
+					+ (u.cached ? "（缓存 " + fmtTokens(u.cached) + " · " + rate + "%）" : "")
+					+ " · 输出 " + fmtTokens(u.output);
+			}
+			usage.title = "total_tokens " + fmtTokens(u.total || 0)
+				+ (u.cached ? "\n缓存命中的输入 token 不计费或按更低价格计费（取决于服务商）" : "");
+			meta.appendChild(usage);
+		}
+
 		// ★「本次使用了 N 条记忆」
 		const memCount = (result.memoryUsed || []).length;
 		const badge = document.createElement("span");
@@ -344,10 +363,45 @@
 			list.appendChild(document.createTextNode("引用："));
 			cites.forEach((c, i) => list.appendChild(makeCiteChip(c, i + 1, result.titles || {})));
 			wrap.appendChild(list);
+
+			// 原文摘录：每条引用都能直接展开看原句，而不是只有页码
+			const quotes = document.createElement("div");
+			quotes.className = "pl-cite-quotes";
+			for (const c of cites) {
+				if (!c.quote) continue;
+				const item = document.createElement("div");
+				item.className = "pl-cite-quote";
+
+				const head = document.createElement("button");
+				head.type = "button";
+				head.className = "pl-cite-quote-head";
+				head.textContent = "原文 · p." + (c.page || "?") + " · "
+					+ String(c.title || (result.titles || {})[c.paperId] || c.paperId).slice(0, 28);
+
+				const body = document.createElement("div");
+				body.className = "pl-cite-quote-body";
+				body.textContent = "“" + c.quote + "”";
+				body.style.display = "none";
+
+				head.addEventListener("click", () => {
+					body.style.display = body.style.display === "none" ? "block" : "none";
+				});
+				head.addEventListener("dblclick", () => jumpTo(c.paperId, c.page));
+
+				item.appendChild(head);
+				item.appendChild(body);
+				quotes.appendChild(item);
+			}
+			if (quotes.childNodes.length) wrap.appendChild(quotes);
 		}
 
 		els.messages.appendChild(wrap);
 		scrollToBottom();
+	}
+
+	/** 千分位，避免 12345 这种数字难读 */
+	function fmtTokens(n) {
+		return Number(n || 0).toLocaleString("en-US");
 	}
 
 	function intentLabel(intent) {

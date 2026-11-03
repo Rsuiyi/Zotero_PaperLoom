@@ -44,6 +44,48 @@ PaperLoom.LLM = (function () {
 		try { Zotero.debug("[PaperLoom:LLM] " + msg); } catch (e) { /* ignore */ }
 	}
 
+	// ------------------------------------------------------------------ 用量统计
+
+	/**
+	 * 从各家 usage 结构里提取输入 / 输出 / 缓存命中。
+	 * 覆盖三种常见写法（照 Zotero AI Sidebar 的做法）：
+	 *   - OpenAI：prompt_tokens / completion_tokens / prompt_tokens_details.cached_tokens
+	 *   - DeepSeek：prompt_cache_hit_tokens + prompt_cache_miss_tokens
+	 *   - Anthropic：input_tokens / output_tokens / input_tokens_details.cached_tokens
+	 */
+	function extractUsage(data) {
+		const u = data && data.usage;
+		if (!u) return null;
+
+		const details = u.prompt_tokens_details || u.input_tokens_details || {};
+		const deepseekInput = (u.prompt_cache_hit_tokens || 0) + (u.prompt_cache_miss_tokens || 0);
+
+		const input = (typeof u.prompt_tokens === "number") ? u.prompt_tokens
+			: (typeof u.input_tokens === "number") ? u.input_tokens
+				: deepseekInput;
+		const output = (typeof u.completion_tokens === "number") ? u.completion_tokens
+			: (typeof u.output_tokens === "number") ? u.output_tokens
+				: 0;
+		const cached = (typeof u.prompt_cache_hit_tokens === "number") ? u.prompt_cache_hit_tokens
+			: (typeof details.cached_tokens === "number") ? details.cached_tokens
+				: (typeof u.cache_read_input_tokens === "number") ? u.cache_read_input_tokens
+					: 0;
+
+		return {
+			input: input || 0,
+			output: output || 0,
+			cached: cached || 0,
+			total: typeof u.total_tokens === "number" ? u.total_tokens : ((input || 0) + (output || 0))
+		};
+	}
+
+	let _lastUsage = null;
+
+	/** 最近一次请求的用量（没拿到 usage 时为 null） */
+	function lastUsage() {
+		return _lastUsage;
+	}
+
 	// ------------------------------------------------------------------ 服务商注册表
 
 	/** 读取服务商列表（JSON 存在偏好里，内容很小，读写都同步） */
@@ -385,6 +427,8 @@ PaperLoom.LLM = (function () {
 			const cached = await PaperLoom.Storage.readCache(cacheKey);
 			if (cached !== null) {
 				try {
+					// 本地缓存命中：没有真实 token 消耗，用 localCache 标记区分
+					_lastUsage = { input: 0, output: 0, cached: 0, total: 0, localCache: true };
 					return JSON.parse(cached).content;
 				}
 				catch (e) { /* 缓存损坏则忽略 */ }
@@ -400,6 +444,8 @@ PaperLoom.LLM = (function () {
 			payload,
 			cfg.timeoutMs
 		);
+
+		_lastUsage = extractUsage(data);
 
 		const choice = data && data.choices && data.choices[0];
 		let content = choice && choice.message && choice.message.content;
@@ -500,7 +546,7 @@ PaperLoom.LLM = (function () {
 		makeRef, parseRef, resolveRef,
 		// 配置与调用
 		config, isConfigured,
-		complete, completeJSON, parseJSON, testConnection,
+		complete, completeJSON, parseJSON, testConnection, lastUsage, extractUsage,
 		// 模型查询
 		listModels, extractModelIds, modelURLs,
 		// 兼容旧调用

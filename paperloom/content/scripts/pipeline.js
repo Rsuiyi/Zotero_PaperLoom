@@ -105,6 +105,16 @@ PaperLoom.Pipeline = (function () {
 }
 没有可写的增量时给空数组/空对象。`;
 
+	/** 用户在设置里写的附加系统提示词 */
+	function extraSystemPrompt() {
+		try {
+			return String(Zotero.Prefs.get("extensions.paperloom.systemPrompt", true) || "").trim();
+		}
+		catch (e) {
+			return "";
+		}
+	}
+
 	function buildMessages(ctx) {
 		const memoryBlock = PaperLoom.Memory.renderBlock(ctx.memoryFacts);
 
@@ -120,8 +130,14 @@ PaperLoom.Pipeline = (function () {
 			renderExistingNodes(ctx.existingNodes)
 		].filter(Boolean);
 
+		// 自定义提示词放在 system 末尾：既生效，又不破坏前面稳定的规则前缀（利于缓存命中）
+		const extra = extraSystemPrompt();
+		const system = extra
+			? ANSWER_CONTRACT + "\n\n## 用户自定义系统提示词（可覆盖回答风格，但不得违反上面的证据与引用规则）\n" + extra
+			: ANSWER_CONTRACT;
+
 		return [
-			{ role: "system", content: ANSWER_CONTRACT },
+			{ role: "system", content: system },
 			{ role: "user", content: sections.join("\n\n") + "\n\n## 用户问题\n" + ctx.query }
 		];
 	}
@@ -340,6 +356,7 @@ PaperLoom.Pipeline = (function () {
 
 		progress("thinking", "模型生成中…");
 		const parsed = await PaperLoom.LLM.completeJSON({ messages: buildMessages(ctx) });
+		const usage = PaperLoom.LLM.lastUsage ? PaperLoom.LLM.lastUsage() : null;
 
 		// ---- 5 引用校验（定位失败的引用标红，不静默通过）
 		const evidenceIndex = Object.create(null);
@@ -382,7 +399,8 @@ PaperLoom.Pipeline = (function () {
 			answer: parsed.answer || "",
 			citations: citations,
 			memoryUsed: memoryFacts.map(f => f.factId),
-			graphTouched: []
+			graphTouched: [],
+			usage: usage
 		});
 
 		const delta = normalizeGraphDelta(parsed.graph_delta, { focusDocs, titles });
@@ -442,6 +460,7 @@ PaperLoom.Pipeline = (function () {
 			memoryUsed: memoryFacts,
 			memoryApplied: memoryApplied,
 			diff: diff,
+			usage: usage,
 			proposedDelta: opts.dryRun ? delta : null,
 			evidencePaperCount: paperIdsInEvidence.size,
 			degraded: false

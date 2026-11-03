@@ -477,6 +477,39 @@ function section(t) { console.log("\n" + t); }
 		check("删除节点生效", !g.nodes.some(n => n.label === "改名后概念"));
 	}
 
+	section("14. 用量统计与系统提示词");
+	{
+		const u1 = PL.LLM.extractUsage({
+			usage: {
+				prompt_tokens: 1000, completion_tokens: 120, total_tokens: 1120,
+				prompt_cache_hit_tokens: 800, prompt_cache_miss_tokens: 200
+			}
+		});
+		check("★ 解析 DeepSeek 缓存命中字段",
+			u1 && u1.input === 1000 && u1.output === 120 && u1.cached === 800,
+			JSON.stringify(u1));
+
+		const u2 = PL.LLM.extractUsage({
+			usage: { input_tokens: 500, output_tokens: 60, input_tokens_details: { cached_tokens: 400 } }
+		});
+		check("解析 Anthropic 风格 usage",
+			u2 && u2.input === 500 && u2.output === 60 && u2.cached === 400,
+			JSON.stringify(u2));
+
+		check("无 usage 时返回 null", PL.LLM.extractUsage({}) === null);
+
+		// 自定义系统提示词必须出现在 system 消息里
+		Zotero.Prefs.set("extensions.paperloom.systemPrompt", "回答用中文，先给结论");
+		const msgs = PL.Pipeline.buildMessages({
+			query: "这篇讲了什么", intent: "single_fact", memoryFacts: [],
+			titles: {}, currentHits: [], libraryHits: [], graphContext: {}, existingNodes: []
+		});
+		check("★ 自定义系统提示词注入 system 消息",
+			msgs[0].role === "system" && msgs[0].content.includes("回答用中文，先给结论"),
+			msgs[0].content.slice(-80));
+		Zotero.Prefs.set("extensions.paperloom.systemPrompt", "");
+	}
+
 	console.log("\n" + "=".repeat(50));
 	console.log("通过 " + pass + " 项，失败 " + fail + " 项");
 	console.log("=".repeat(50));

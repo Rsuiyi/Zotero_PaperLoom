@@ -83,6 +83,7 @@
 		$("timeoutMs").value = String(prefGet("timeoutMs", 90000));
 		$("useCache").checked = prefGet("useCache", true) !== false;
 		$("dataDir").value = String(prefGet("dataDir", ""));
+		$("systemPrompt").value = String(prefGet("systemPrompt", ""));
 
 		try {
 			$("resolvedDir").textContent = PL ? PL.Storage.root() : "—";
@@ -103,6 +104,8 @@
 
 		prefSet("useCache", !!$("useCache").checked);
 		prefSet("dataDir", String($("dataDir").value || "").trim());
+		// 系统提示词保留内部换行，只去掉首尾空白
+		prefSet("systemPrompt", String($("systemPrompt").value || "").trim());
 
 		setStatus("已保存", "ok");
 	}

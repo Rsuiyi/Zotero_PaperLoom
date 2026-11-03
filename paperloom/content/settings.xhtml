@@ -119,6 +119,16 @@
 	</section>
 
 	<section>
+		<h2>系统提示词</h2>
+		<div class="row" style="align-items: flex-start;">
+			<label for="systemPrompt" style="padding-top:6px;">附加提示词</label>
+			<textarea id="systemPrompt" rows="6" placeholder="例如：用中文回答；先给结论再给依据；解释术语时给一个类比。"
+				style="flex:1;padding:6px 8px;border:1px solid #d1d5da;border-radius:5px;font:inherit;resize:vertical;"></textarea>
+		</div>
+		<div class="desc">会拼在默认规则之后：可以改变语气、长度、语言，但不能让它编造证据或省略引用。</div>
+	</section>
+
+	<section>
 		<h2>通用参数</h2>
 		<div class="row">
 			<label for="maxTokens">max_tokens</label>

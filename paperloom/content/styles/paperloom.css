@@ -550,3 +550,42 @@ body.pl-embed .pl-graph-side {
 body.pl-embed .pl-graph-layout {
 	grid-template-columns: 1fr;
 }
+
+/* ---------------------------------------------------------- 引用原文摘录 */
+
+.pl-cite-quotes {
+	margin-top: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.pl-cite-quote {
+	border: 1px solid var(--pl-border);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.pl-cite-quote-head {
+	display: block;
+	width: 100%;
+	text-align: left;
+	padding: 4px 8px;
+	background: var(--pl-panel);
+	border: 0;
+	cursor: pointer;
+	font-size: 11px;
+	color: var(--pl-text-dim);
+}
+
+.pl-cite-quote-head:hover {
+	color: var(--pl-accent);
+}
+
+.pl-cite-quote-body {
+	padding: 6px 8px;
+	font-size: 12px;
+	border-top: 1px solid var(--pl-border);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
