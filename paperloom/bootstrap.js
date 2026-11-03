@@ -90,6 +90,7 @@ async function startup({ id, version, rootURI }) {
 		await Zotero.uiReadyPromise;
 		await registerPreferencePane();
 		registerItemPaneSection();
+		registerReaderUI();
 
 		for (const win of Zotero.getMainWindows()) {
 			addToWindow(win);
@@ -400,9 +401,11 @@ function installDock(win) {
 	const doc = win.document;
 	if (!doc || doc.getElementById("paperloom-dock")) return;
 
-	const host = doc.getElementById("zotero-layout-switcher");
+	// 挂在 #browser（整个标签区的横向父容器）上，而不是某个标签页内部：
+	// 这样切到 PDF 阅读器标签时，右侧面板依然在。
+	const host = doc.getElementById("browser") || doc.getElementById("zotero-layout-switcher");
 	if (!host) {
-		log("找不到 #zotero-layout-switcher，右侧面板不可用");
+		log("找不到主布局容器（#browser），右侧面板不可用");
 		return;
 	}
 
@@ -445,6 +448,37 @@ function installDock(win) {
 		}
 		catch (e) { /* 窗口关闭中 */ }
 	}, 1200);
+}
+
+/**
+ * 阅读器工具栏按钮。
+ * 文献列表的工具栏在 PDF 标签页里不可见，所以阅读器里必须另有一个入口。
+ */
+function registerReaderUI() {
+	if (!Zotero.Reader || typeof Zotero.Reader.registerEventListener !== "function") {
+		log("Zotero.Reader.registerEventListener 不可用，阅读器内不显示入口");
+		return;
+	}
+
+	Zotero.Reader.registerEventListener("renderToolbar", (event) => {
+		try {
+			const doc = event.doc;
+			if (!doc || doc.getElementById("paperloom-reader-btn")) return;
+
+			const btn = doc.createElement("button");
+			btn.id = "paperloom-reader-btn";
+			btn.className = "toolbar-button";
+			btn.textContent = "PaperLoom";
+			btn.title = "显示 / 隐藏右侧 PaperLoom 面板";
+			btn.addEventListener("click", () => toggleDock(Zotero.getMainWindow()));
+
+			if (typeof event.append === "function") event.append(btn);
+			else doc.querySelector(".toolbar")?.appendChild(btn);
+		}
+		catch (e) {
+			log("阅读器工具栏按钮注入失败: " + e);
+		}
+	}, PLUGIN_ID);
 }
 
 function removeDock(win) {

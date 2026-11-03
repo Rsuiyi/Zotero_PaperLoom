@@ -551,6 +551,34 @@ function section(t) { console.log("\n" + t); }
 
 		check("自动时不发送任何 reasoning 参数",
 			Object.keys(PL.LLM.reasoningParam("", "deepseek-v4-pro")).length === 0);
+
+		// 服务商拒绝该参数（400）时要自动去掉并重试，不能把对话搞挂
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "high");
+		const calls = [];
+		sandbox.fetch = async (url, init) => {
+			const body = JSON.parse(init.body);
+			calls.push(body);
+			if (calls.length === 1) {
+				return { ok: false, status: 400, text: async () => "reasoning_effort unsupported" };
+			}
+			return {
+				ok: true,
+				status: 200,
+				text: async () => JSON.stringify({
+					choices: [{ message: { content: "ok" } }],
+					usage: { prompt_tokens: 1, completion_tokens: 1 }
+				})
+			};
+		};
+
+		const retried = await PL.LLM.complete({ messages: [{ role: "user", content: "hi" }] });
+		check("★ 400 时自动去掉 reasoning 参数重试",
+			calls.length === 2 && !("reasoning_effort" in calls[1]) && retried === "ok",
+			JSON.stringify(calls.map(c => Object.keys(c))));
+		check("降级会给出提示", typeof PL.LLM.lastWarning() === "string" && PL.LLM.lastWarning().length > 0,
+			PL.LLM.lastWarning());
+
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "");
 	}
 
 	console.log("\n" + "=".repeat(50));

@@ -372,6 +372,8 @@ PaperLoom.Pipeline = (function () {
 		progress("thinking", "模型生成中…");
 		const parsed = await PaperLoom.LLM.completeJSON({ messages: buildMessages(ctx) });
 		const usage = PaperLoom.LLM.lastUsage ? PaperLoom.LLM.lastUsage() : null;
+		const llmWarning = PaperLoom.LLM.lastWarning ? PaperLoom.LLM.lastWarning() : null;
+		if (llmWarning) warnings.push(llmWarning);
 
 		// ---- 5 引用校验（定位失败的引用标红，不静默通过）
 		const evidenceIndex = Object.create(null);

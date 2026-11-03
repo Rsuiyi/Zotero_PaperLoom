@@ -390,7 +390,7 @@
 				head.addEventListener("click", () => {
 					body.style.display = body.style.display === "none" ? "block" : "none";
 				});
-				head.addEventListener("dblclick", () => jumpTo(c.paperId, c.page));
+				head.addEventListener("dblclick", () => jumpTo(c.paperId, c.page, c.quote));
 
 				item.appendChild(head);
 				item.appendChild(body);
@@ -419,7 +419,7 @@
 					h.textContent = "p." + (s.page || "?") + " · "
 						+ String(s.title || s.paperId).slice(0, 28)
 						+ "（点击跳到原文）";
-					h.addEventListener("click", () => jumpTo(s.paperId, s.page));
+					h.addEventListener("click", () => jumpTo(s.paperId, s.page, s.quote));
 
 					const body = document.createElement("div");
 					body.className = "pl-cite-quote-body";
@@ -609,7 +609,7 @@
 		else {
 			chip.title = (citation.quote ? "“" + String(citation.quote).slice(0, 160) + "”\n\n" : "")
 				+ "点击跳转到原文第 " + page + " 页";
-			chip.addEventListener("click", () => jumpTo(citation.paperId, page));
+			chip.addEventListener("click", () => jumpTo(citation.paperId, page, citation.quote));
 		}
 		return chip;
 	}
@@ -619,7 +619,7 @@
 	 * 首选 Zotero.Reader.open(attachmentID, location)，失败退回 zotero://open-pdf URI
 	 * （后者是官方支持的格式，比私有 API 稳）。
 	 */
-	async function jumpTo(paperId, page) {
+	async function jumpTo(paperId, page, quote) {
 		try {
 			const doc = await PL.Storage.readPaperDoc(paperId);
 			const attachmentId = doc && doc.attachmentId;
@@ -627,6 +627,8 @@
 			if (attachmentId && Zotero.Reader && Zotero.Reader.open) {
 				try {
 					await Zotero.Reader.open(attachmentId, { pageIndex: Math.max(0, (page || 1) - 1) });
+					// 打开后再把引用的那一句高亮出来（不是整页）
+					if (quote) highlightWithRetry(attachmentId, page, quote);
 					return;
 				}
 				catch (e) { /* 私有 API 变动，走下面的 URI 路径 */ }
@@ -650,6 +652,79 @@
 		catch (e) {
 			showError("跳转失败：" + e);
 		}
+	}
+
+	// ------------------------------------------------------------ 原文高亮
+
+	/**
+	 * 在阅读器里高亮"引用的那一句"，而不是整页。
+	 * 做法：PDF 文本层里找包含引文前 40 个字符的 span，加背景色并滚动到可见处。
+	 * 只改 DOM，不写入 Zotero 标注库，避免污染用户自己的批注。
+	 */
+	async function highlightInReader(attachmentId, page, quote) {
+		const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+		const reader = readers.find(r => r.itemID === attachmentId);
+		if (!reader) return false;
+
+		let win = null;
+		try {
+			win = reader._iframeWindow && (reader._iframeWindow.wrappedJSObject || reader._iframeWindow);
+		}
+		catch (e) {
+			return false;
+		}
+		if (!win || !win.document) return false;
+
+		const doc = win.document;
+		const spans = Array.from(doc.querySelectorAll(".textLayer span"));
+		if (!spans.length) return false;
+
+		const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+		const needle = norm(quote).slice(0, 40);
+		if (!needle) return false;
+
+		let target = spans.find(sp => norm(sp.textContent).includes(needle));
+		if (!target) {
+			// 引文可能跨多个 span：退一步，用前几个较长词片段匹配
+			const frag = needle.split(" ").filter(w => w.length >= 4).slice(0, 3).join(" ");
+			if (frag) target = spans.find(sp => norm(sp.textContent).includes(frag));
+		}
+		if (!target) return false;
+
+		// 清掉上一次的高亮
+		for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
+
+		if (!doc.getElementById("paperloom-hl-style")) {
+			const style = doc.createElement("style");
+			style.id = "paperloom-hl-style";
+			style.textContent = ".paperloom-hl{background:rgba(255,214,0,.55)!important;border-radius:2px;box-shadow:0 0 0 2px rgba(255,214,0,.35);}";
+			(doc.head || doc.documentElement).appendChild(style);
+		}
+
+		target.classList.add("paperloom-hl");
+		try {
+			target.scrollIntoView({ block: "center", behavior: "smooth" });
+		}
+		catch (e) { /* ignore */ }
+		return true;
+	}
+
+	/** 阅读器打开后需要等页面渲染：最多重试约 8 秒 */
+	async function highlightWithRetry(attachmentId, page, quote) {
+		for (let i = 0; i < 20; i++) {
+			await new Promise(r => setTimeout(r, 400));
+			try {
+				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+				const reader = readers.find(r => r.itemID === attachmentId);
+				if (reader && reader.navigate) {
+					try { await reader.navigate({ pageIndex: Math.max(0, (page || 1) - 1) }); }
+					catch (e) { /* ignore */ }
+				}
+				if (await highlightInReader(attachmentId, page, quote)) return true;
+			}
+			catch (e) { /* 重试 */ }
+		}
+		return false;
 	}
 
 	function openPanel(kind) {

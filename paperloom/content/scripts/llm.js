@@ -80,10 +80,16 @@ PaperLoom.LLM = (function () {
 	}
 
 	let _lastUsage = null;
+	let _lastWarning = null;
 
 	/** 最近一次请求的用量（没拿到 usage 时为 null） */
 	function lastUsage() {
 		return _lastUsage;
+	}
+
+	/** 最近一次请求的降级说明（例如服务商不支持 reasoning 参数） */
+	function lastWarning() {
+		return _lastWarning;
 	}
 
 	// DeepSeek V4 系列（pro / flash）的推理模型识别，与 AI Sidebar 的规则一致
@@ -445,6 +451,7 @@ PaperLoom.LLM = (function () {
 		//   其余 OpenAI 兼容服务只发 reasoning_effort。
 		const effort = String(getPref("reasoningEffort", "") || "").trim();
 		Object.assign(payload, reasoningParam(effort, model));
+		_lastWarning = null;
 
 		const cacheKey = S.hash(target.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
 
@@ -460,15 +467,33 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		const data = await postJSON(
-			target.baseURL + "/chat/completions",
-			{
-				"Content-Type": "application/json",
-				"Authorization": "Bearer " + target.apiKey
-			},
-			payload,
-			cfg.timeoutMs
-		);
+		const url = target.baseURL + "/chat/completions";
+		const headers = {
+			"Content-Type": "application/json",
+			"Authorization": "Bearer " + target.apiKey
+		};
+
+		let data;
+		try {
+			data = await postJSON(url, headers, payload, cfg.timeoutMs);
+		}
+		catch (e) {
+			// 服务商不支持 reasoning_effort / thinking 时通常会回 400。
+			// 这里自动去掉这两个参数重试一次，保证"选了推理强度"不会把整个对话搞挂。
+			const msg = String((e && e.message) || e);
+			const hasReasoning = payload.reasoning_effort || payload.thinking;
+			if (hasReasoning && /\b400\b/.test(msg)) {
+				log("服务商拒绝 reasoning 参数，已去掉后重试：" + msg.slice(0, 160));
+				_lastWarning = "当前服务商不接受推理强度参数，本轮已自动忽略（可在设置里切回「自动」）。";
+				const retryPayload = Object.assign({}, payload);
+				delete retryPayload.reasoning_effort;
+				delete retryPayload.thinking;
+				data = await postJSON(url, headers, retryPayload, cfg.timeoutMs);
+			}
+			else {
+				throw e;
+			}
+		}
 
 		_lastUsage = extractUsage(data);
 
@@ -571,7 +596,8 @@ PaperLoom.LLM = (function () {
 		makeRef, parseRef, resolveRef,
 		// 配置与调用
 		config, isConfigured,
-		complete, completeJSON, parseJSON, testConnection, lastUsage, extractUsage, reasoningParam,
+		complete, completeJSON, parseJSON, testConnection,
+		lastUsage, lastWarning, extractUsage, reasoningParam,
 		// 模型查询
 		listModels, extractModelIds, modelURLs,
 		// 兼容旧调用

@@ -589,3 +589,11 @@ body.pl-embed .pl-graph-layout {
 	white-space: pre-wrap;
 	word-break: break-word;
 }
+
+/* 对话栏里的推理强度下拉：给足点击区域，避免窄面板下被挤没 */
+#pl-effort {
+	height: 22px;
+	max-width: 84px;
+	font-size: 11px;
+	padding: 0 4px;
+}
