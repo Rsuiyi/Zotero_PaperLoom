@@ -38,9 +38,15 @@
 		.pl-table button { padding: 2px 8px; font-size: 12px; margin-right: 4px; }
 		.pl-empty-row { color: #6a737d; text-align: center; padding: 14px 0; }
 
+		/* 底栏从第一屏就固定在底部：不透明背景 + fixed，
+		   不能再用 sticky（sticky 要滚动到底才贴住，表现为"一开始看不到保存"） */
 		footer {
-			position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 24px;
-			background: #fafbfc; border-top: 1px solid #e1e4e8; display: flex; align-items: center; gap: 10px;
+			position: fixed; left: 0; right: 0; bottom: 0;
+			padding: 12px 24px;
+			background: #ffffff;
+			border-top: 1px solid #e1e4e8;
+			display: flex; align-items: center; gap: 10px;
+			z-index: 10;
 		}
 		button { padding: 6px 14px; border: 1px solid #d1d5da; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
 		button:hover { background: #f3f4f6; }
@@ -51,9 +57,14 @@
 		#status.err { color: #cf222e; }
 		#status.busy { color: #6a737d; }
 
-		body.pl-embed { padding: 0 0 60px; background: transparent; }
+		body.pl-embed { padding: 0 0 64px; background: transparent; }
 		body.pl-embed h1, body.pl-embed .pl-hint { display: none; }
-		body.pl-embed footer { position: sticky; left: auto; right: auto; padding: 8px 0; background: transparent; }
+		/* 内嵌时同样固定在 iframe 视口底部，并且必须是不透明背景 */
+		body.pl-embed footer {
+			position: fixed; left: 0; right: 0; bottom: 0;
+			padding: 8px 0;
+			background: #ffffff;
+		}
 	</style>
 </head>
 <body>
