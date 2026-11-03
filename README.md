@@ -29,14 +29,19 @@ PaperLoom 把三件事做成一个闭环：
 
 两个入口，内容是同一份界面：
 
-- **Zotero 设置 → PaperLoom**（内嵌完整设置，点进去即可改）
-- **工具 → PaperLoom → 设置…**（独立窗口，任何版本都能用）
+- **Zotero 设置 → PaperLoom**（内嵌完整设置）
+- **工具 → PaperLoom → 设置…**（独立窗口）
 
-可配置：API Base URL（OpenAI 兼容，填到 `/v1`）、API Key、对话模型、抽取模型、`max_tokens`、`temperature`、超时、结果缓存、数据目录。
+配置分三步，和 PDF2zh 的模型管理思路一致：
 
-- **模型下拉框**：打开设置即载入内置模型目录（DeepSeek / OpenAI / Claude），有 Key 时再合并服务商 `GET /models` 的返回；也可以手动填写。
-- **测试连接**：发一条 16 token 的 ping，确认接口、鉴权和模型名是否有效。
-- 配置只写入本机 Zotero 偏好（`extensions.paperloom.*`），不会上传。
+1. **新增服务商**：点「新增服务商」弹出小窗口，填名称、Base URL、API Key，点「获取模型列表」——列表来自该接口真实返回的 `GET /models`，**不会凭空出现任何模型**。
+2. **勾选模型**：弹窗里勾选要保留的模型，保存后出现在外面的服务商表格里。
+3. **分别选模型**：设置主页用两个下拉框，分别指定**对话模型**和**图谱抽取模型**，两者可以来自不同服务商。
+
+其他参数：`max_tokens`、`temperature`、超时、结果缓存、数据目录。
+「测试所选对话模型」会发一条 16 token 的 ping，确认地址、鉴权和模型名。
+
+配置只写入本机 Zotero 偏好（`extensions.paperloom.*`），不会上传。
 
 ## 对话面板
 

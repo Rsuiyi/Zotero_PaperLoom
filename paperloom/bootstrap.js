@@ -69,6 +69,9 @@ async function startup({ id, version, rootURI }) {
 		PaperLoom.version = version;
 		Zotero.PaperLoom = PaperLoom;          // 暴露给面板 iframe 与调试控制台
 
+		// 旧版单服务商配置迁移成服务商列表（只在列表为空时执行一次）
+		PaperLoom.LLM.migrateLegacy();
+
 		await PaperLoom.Storage.ensureDir();
 		log("领域层就绪，数据目录 " + PaperLoom.Storage.root());
 		log("能力探测：" + PaperLoom.Compat.describe() + "（列出的是当前版本缺失的能力）");
@@ -121,24 +124,33 @@ async function runModelSelfTest() {
 		if (!PaperLoom || !PaperLoom.LLM) {
 			throw new Error("领域层未加载（PaperLoom.LLM 不可用）");
 		}
+		out.providers = PaperLoom.LLM.getProviders().map(p => ({
+			name: p.name, baseURL: p.baseURL, models: (p.models || []).length,
+			keyLength: String(p.apiKey || "").length
+		}));
+
 		const cfg = PaperLoom.LLM.config();
-		out.baseURL = cfg.baseURL;
-		out.keyLength = String(cfg.apiKey || "").length;
-		if (!cfg.apiKey) {
-			throw new Error("未配置 API Key");
+		if (!cfg.chat) {
+			throw new Error("尚未选择对话模型");
 		}
 
-		const models = await PaperLoom.LLM.listModels();
-		out.source = models.source || "unknown";
-		out.count = models.length;
-		out.models = Array.prototype.slice.call(models, 0, 50);
-		out.error = models.error || null;
-		out.tried = models.tried || null;
-		out.ok = out.source === "api";
+		out.chat = {
+			provider: cfg.chat.providerName,
+			baseURL: cfg.chat.baseURL,
+			model: cfg.chat.model,
+			keyLength: String(cfg.chat.apiKey || "").length
+		};
+
+		const result = await PaperLoom.LLM.listModels(cfg.chat);
+		out.count = result.models.length;
+		out.models = result.models.slice(0, 50);
+		out.url = result.url;
+		out.ok = true;
 	}
 	catch (e) {
 		out.ok = false;
 		out.error = String((e && e.message) || e);
+		if (e && e.tried) out.tried = e.tried;
 		out.stack = e && e.stack ? String(e.stack).split("\n").slice(0, 6) : null;
 	}
 
@@ -460,7 +472,7 @@ async function rebuildSelected(win) {
 			return;
 		}
 		if (!PaperLoom.LLM.isConfigured()) {
-			win.alert("请先在 设置 → PaperLoom 中填入 API Key。");
+			win.alert("请先在 设置 → PaperLoom 中添加模型服务商并选择模型。");
 			return;
 		}
 

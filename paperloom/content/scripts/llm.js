@@ -1,9 +1,15 @@
 /* PaperLoom — llm.js
- * L0 外部：所有 LLM 调用统一走 complete()，换供应商 / 接本地模型不改业务代码。
+ * L0 外部：服务商注册表 + 统一调用入口。
+ *
+ * 模型不再靠 base URL 猜，而是显式绑定到「用户新增的服务商」：
+ *   providers[]     每个服务商 = { id, name, baseURL, apiKey, models[] }
+ *   chatModelRef    "providerId|model"    回答问题时用
+ *   extractModelRef "providerId|model"    建图谱 / 抽记忆时用
+ * 两个引用互相独立，可以来自不同站点。
+ *
  * 三条硬规则：
- *   1. OpenAI 兼容协议，base URL / model 全部可配；
- *   2. max_tokens 不低于 4096 —— DeepSeek 系推理模型的 reasoning token 计入 completion，
- *      给小了会出现 content 为空；
+ *   1. OpenAI 兼容协议；
+ *   2. max_tokens 不低于 4096 —— 推理模型的 reasoning token 计入 completion；
  *   3. 结果按 hash(prompt) 落盘缓存，开发期反复调试不烧钱。
  */
 if (typeof PaperLoom === "undefined") {
@@ -12,10 +18,11 @@ if (typeof PaperLoom === "undefined") {
 
 PaperLoom.LLM = (function () {
 	const S = PaperLoom.Schema;
+	const NS = "extensions.paperloom.";
 
-	function pref(key, fallback) {
+	function getPref(key, fallback) {
 		try {
-			const v = Zotero.Prefs.get("extensions.paperloom." + key, true);
+			const v = Zotero.Prefs.get(NS + key, true);
 			return (v === undefined || v === null || v === "") ? fallback : v;
 		}
 		catch (e) {
@@ -23,53 +30,136 @@ PaperLoom.LLM = (function () {
 		}
 	}
 
-	/**
-	 * 读取运行配置。
-	 * overrides 允许调用方（例如设置界面）传入**表单里当前输入的值**，
-	 * 而不是只能用已保存的偏好 —— PDF2zh 的「获取模型列表」就是这么做的：
-	 * 先填 Key 和 Base URL，点按钮，立刻用这两个值去查。
-	 */
-	function config(overrides) {
-		overrides = overrides || {};
-		const rawBase = (overrides.baseURL !== undefined && overrides.baseURL !== null && overrides.baseURL !== "")
-			? overrides.baseURL
-			: pref("apiBase", "https://api.deepseek.com/v1");
-		const base = String(rawBase).trim().replace(/\/+$/, "");
-
-		const apiKey = (overrides.apiKey !== undefined && overrides.apiKey !== null)
-			? String(overrides.apiKey).trim()
-			: String(pref("apiKey", "")).trim();
-
-		return {
-			baseURL: base,
-			apiKey: apiKey,
-			chatModel: String(overrides.chatModel || pref("chatModel", "deepseek-v4-pro")),
-			extractModel: String(overrides.extractModel || pref("extractModel", "deepseek-v4-flash")),
-			maxTokens: Math.max(S.LIMITS.llmMinMaxTokens, parseInt(pref("maxTokens", 4096), 10) || 4096),
-			temperature: parseFloat(pref("temperature", 0.3)),
-			timeoutMs: parseInt(pref("timeoutMs", 90000), 10) || 90000,
-			useCache: pref("useCache", true) !== false
-		};
-	}
-
-	function isConfigured() {
-		return !!config().apiKey;
+	function setPref(key, value) {
+		try {
+			Zotero.Prefs.set(NS + key, value, true);
+			return true;
+		}
+		catch (e) {
+			return false;
+		}
 	}
 
 	function log(msg) {
 		try { Zotero.debug("[PaperLoom:LLM] " + msg); } catch (e) { /* ignore */ }
 	}
 
+	// ------------------------------------------------------------------ 服务商注册表
+
+	/** 读取服务商列表（JSON 存在偏好里，内容很小，读写都同步） */
+	function getProviders() {
+		const raw = getPref("providers", "");
+		if (!raw) return [];
+		try {
+			const arr = JSON.parse(raw);
+			return Array.isArray(arr) ? arr : [];
+		}
+		catch (e) {
+			log("providers 解析失败: " + e);
+			return [];
+		}
+	}
+
+	function saveProviders(list) {
+		const clean = (Array.isArray(list) ? list : []).map(p => ({
+			id: String(p.id || newProviderID()),
+			name: String(p.name || "未命名服务商"),
+			baseURL: String(p.baseURL || "").trim().replace(/\/+$/, ""),
+			apiKey: String(p.apiKey || "").trim(),
+			models: Array.isArray(p.models) ? p.models.map(String) : [],
+			fetchedAt: p.fetchedAt || null
+		}));
+		setPref("providers", JSON.stringify(clean));
+		return clean;
+	}
+
+	function newProviderID() {
+		return "p_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+	}
+
+	/** 旧版本只有一个 apiBase/apiKey，升级时自动迁移成一条服务商记录 */
+	function migrateLegacy() {
+		if (getProviders().length) return;
+		const key = String(getPref("apiKey", "") || "").trim();
+		const base = String(getPref("apiBase", "") || "").trim();
+		if (!key && !base) return;
+
+		const p = {
+			id: newProviderID(),
+			name: "默认服务商",
+			baseURL: base || "https://api.deepseek.com",
+			apiKey: key,
+			models: [],
+			fetchedAt: null
+		};
+		saveProviders([p]);
+
+		const legacyChat = String(getPref("chatModel", "") || "");
+		const legacyExtract = String(getPref("extractModel", "") || "");
+		if (legacyChat && !getPref("chatModelRef", "")) {
+			setPref("chatModelRef", p.id + "|" + legacyChat);
+			p.models.push(legacyChat);
+		}
+		if (legacyExtract && !getPref("extractModelRef", "")) {
+			setPref("extractModelRef", p.id + "|" + legacyExtract);
+			if (!p.models.includes(legacyExtract)) p.models.push(legacyExtract);
+		}
+		saveProviders([p]);
+	}
+
+	/** "providerId|model" → { providerId, model } */
+	function parseRef(ref) {
+		const s = String(ref || "");
+		const i = s.indexOf("|");
+		if (i <= 0 || i >= s.length - 1) return null;
+		return { providerId: s.slice(0, i), model: s.slice(i + 1) };
+	}
+
+	function makeRef(providerId, model) {
+		return providerId + "|" + model;
+	}
+
+	/** 把引用解析成可直接请求的目标；找不到服务商时返回 null */
+	function resolveRef(ref) {
+		const parsed = parseRef(ref);
+		if (!parsed) return null;
+		const provider = getProviders().find(p => p.id === parsed.providerId);
+		if (!provider || !provider.baseURL) return null;
+		return {
+			providerId: provider.id,
+			providerName: provider.name,
+			baseURL: provider.baseURL,
+			apiKey: provider.apiKey,
+			model: parsed.model
+		};
+	}
+
+	// ------------------------------------------------------------------ 运行配置
+
+	function config() {
+		return {
+			chat: resolveRef(getPref("chatModelRef", "")),
+			extract: resolveRef(getPref("extractModelRef", "")),
+			maxTokens: Math.max(S.LIMITS.llmMinMaxTokens, parseInt(getPref("maxTokens", 4096), 10) || 4096),
+			temperature: parseFloat(getPref("temperature", 0.3)),
+			timeoutMs: parseInt(getPref("timeoutMs", 90000), 10) || 90000,
+			useCache: getPref("useCache", true) !== false
+		};
+	}
+
+	function isConfigured() {
+		return !!config().chat;
+	}
+
+	// ------------------------------------------------------------------ 传输层
+
 	/**
-	 * 统一的 POST JSON 传输层。
-	 * 按能力选路径，不判断版本：Zotero.HTTP（特权通道，优先）→ fetch（兜底）。
-	 * @returns {Promise<Object>} 已解析的响应体
+	 * POST JSON。
+	 * 按能力选路径：Zotero.HTTP（特权通道，优先）→ fetch（兜底）。
 	 */
 	async function postJSON(url, headers, payload, timeoutMs) {
 		const body = JSON.stringify(payload);
 
-		// 优先 Zotero.HTTP：特权通道，不受 CORS 与插件沙箱 fetch 能力影响。
-		// PDF2zh / AI Sidebar 的请求都走这条路，实测比裸 fetch 稳。
 		if (Zotero.HTTP && Zotero.HTTP.request) {
 			const xhr = await Zotero.HTTP.request("POST", url, {
 				headers: headers,
@@ -80,7 +170,9 @@ PaperLoom.LLM = (function () {
 			});
 			if (xhr.status < 200 || xhr.status >= 300) {
 				const text = String(xhr.responseText || "").slice(0, 500);
-				throw new Error("LLM HTTP " + xhr.status + (text ? ": " + text : ""));
+				const err = new Error("HTTP " + xhr.status + (text ? ": " + text : ""));
+				err.status = xhr.status;
+				throw err;
 			}
 			if (xhr.response && typeof xhr.response === "object") {
 				return xhr.response;
@@ -107,7 +199,9 @@ PaperLoom.LLM = (function () {
 
 			const text = await resp.text().catch(() => "");
 			if (!resp.ok) {
-				throw new Error("LLM HTTP " + resp.status + ": " + text.slice(0, 500));
+				const err = new Error("HTTP " + resp.status + ": " + text.slice(0, 500));
+				err.status = resp.status;
+				throw err;
 			}
 			try {
 				return text ? JSON.parse(text) : null;
@@ -120,39 +214,34 @@ PaperLoom.LLM = (function () {
 		throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
 	}
 
-	/** 统一的 GET JSON（目前只用于拉模型列表） */
+	/** GET JSON：同样 HTTP 优先 */
 	async function getJSON(url, headers, timeoutMs) {
-		// 优先 Zotero.HTTP：特权通道，不受 CORS 与沙箱 fetch 能力影响。
-		// 这是 PDF2zh / AI Sidebar 都在用的路径，实测比 fetch 稳。
 		if (Zotero.HTTP && Zotero.HTTP.request) {
 			const xhr = await Zotero.HTTP.request("GET", url, {
 				headers: headers,
 				responseType: "json",
-				timeout: timeoutMs
+				timeout: timeoutMs,
+				successCodes: false
 			});
 			if (xhr.status < 200 || xhr.status >= 300) {
-				throw new Error("HTTP " + xhr.status);
+				const err = new Error("HTTP " + xhr.status);
+				err.status = xhr.status;
+				throw err;
 			}
 			if (xhr.response && typeof xhr.response === "object") {
 				return xhr.response;
 			}
 			const raw = xhr.responseText || xhr.response || "";
-			return typeof raw === "string" ? JSON.parse(raw) : raw;
+			return (typeof raw === "string" && raw) ? JSON.parse(raw) : null;
 		}
 
-		if (typeof fetch === "function" && typeof AbortController === "function") {
-			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(), timeoutMs);
-			let resp;
-			try {
-				resp = await fetch(url, { method: "GET", headers: headers, signal: controller.signal });
-			}
-			finally {
-				clearTimeout(timer);
-			}
+		if (typeof fetch === "function") {
+			const resp = await fetch(url, { method: "GET", headers: headers });
 			const text = await resp.text().catch(() => "");
 			if (!resp.ok) {
-				throw new Error("HTTP " + resp.status + ": " + text.slice(0, 300));
+				const err = new Error("HTTP " + resp.status + ": " + text.slice(0, 300));
+				err.status = resp.status;
+				throw err;
 			}
 			try {
 				return text ? JSON.parse(text) : null;
@@ -165,38 +254,7 @@ PaperLoom.LLM = (function () {
 		throw new Error("当前运行环境无法发起 HTTP 请求");
 	}
 
-	/**
-	 * 内置模型目录。
-	 *
-	 * 为什么需要它：GET /models 并不是所有 OpenAI 兼容服务都实现（有的返回空、
-	 * 有的 ID 与对话接口不一致）。主流插件的做法是内置一份供应商目录，
-	 * 再用接口结果做增量补充 —— 这里采用同样的策略。
-	 */
-	const MODEL_CATALOG = {
-		deepseek: ["deepseek-v4-pro", "deepseek-v4-flash"],
-		openai: [
-			"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-			"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"
-		],
-		claude: [
-			"claude-opus-4-7", "claude-opus-4-6",
-			"claude-sonnet-4-6", "claude-haiku-4-5-20251001"
-		]
-	};
-
-	/** 从 base URL 猜供应商；猜不出就返回空目录，让用户手动填 */
-	function detectProvider(baseURL) {
-		const u = String(baseURL || "").toLowerCase();
-		if (u.includes("deepseek")) return "deepseek";
-		if (u.includes("anthropic") || u.includes("claude")) return "claude";
-		if (u.includes("openai")) return "openai";
-		return "";
-	}
-
-	/** 当前 base URL 对应的内置模型（不联网，随叫随到） */
-	function modelSuggestions(overrides) {
-		return (MODEL_CATALOG[detectProvider(config(overrides).baseURL)] || []).slice();
-	}
+	// ------------------------------------------------------------------ 模型列表
 
 	/** base URL 归一化：去掉尾部斜杠 */
 	function normalizeBaseURL(value) {
@@ -204,31 +262,21 @@ PaperLoom.LLM = (function () {
 	}
 
 	/**
-	 * 模型列表端点候选（按顺序尝试）。
-	 *
-	 * PDF2zh 的实现说明了一件事：DeepSeek 的模型列表在
-	 * https://api.deepseek.com/models —— **不带 /v1**。
-	 * 所以这里先试这个，再退回通用的 {base}/models 与去掉 /v1 的写法，
-	 * 兼容官方地址和第三方代理。
+	 * 模型列表端点候选。
+	 * 不同中转站路径不统一：有的在 {base}/models，有的把 /v1 也算在 base 里，
+	 * 所以两种写法都试，谁先成功用谁。
 	 */
 	function modelURLs(baseURL) {
 		const base = normalizeBaseURL(baseURL);
-		const provider = detectProvider(base);
-		const urls = [];
-
-		if (provider === "deepseek") {
-			urls.push("https://api.deepseek.com/models");
-		}
-		if (base) {
-			urls.push(base.endsWith("/models") ? base : base + "/models");
-			if (/\/v1$/i.test(base)) {
-				urls.push(base.replace(/\/v1$/i, "") + "/models");
-			}
+		if (!base) return [];
+		const urls = [base.endsWith("/models") ? base : base + "/models"];
+		if (/\/v1$/i.test(base)) {
+			urls.push(base.replace(/\/v1$/i, "") + "/models");
 		}
 		return Array.from(new Set(urls));
 	}
 
-	/** 从各家五花八门的返回里抠出模型 id（data / models / result / 纯数组） */
+	/** 从各家返回里抠出模型 id（data / models / result / 纯数组，去掉 models/ 前缀） */
 	function extractModelIds(payload) {
 		let list = [];
 		if (Array.isArray(payload)) list = payload;
@@ -244,7 +292,6 @@ PaperLoom.LLM = (function () {
 			})
 			.map((value) => {
 				const s = String(value);
-				// Gemini 风格会带 models/ 前缀，去掉才能直接用于对话
 				return s.startsWith("models/") ? s.slice("models/".length) : s;
 			})
 			.filter(Boolean);
@@ -253,42 +300,31 @@ PaperLoom.LLM = (function () {
 	}
 
 	/**
-	 * 拉取模型列表：内置目录打底，再尝试服务商的模型接口增量合并。
-	 * 没有 Key 或接口失败时返回内置目录而不是抛错 —— 下拉框永远有东西可选。
+	 * 查询某个服务商实际提供的模型。
+	 * 只返回接口真实返回的内容 —— 不再用内置目录"假装"有模型。
+	 * @param {{baseURL:string, apiKey:string}} provider
+	 * @returns {Promise<{models:string[], url:string}>}
 	 */
-	/** 给返回数组挂一个 source 标记，UI 能区分"真的拉到了"还是"只是内置目录" */
-	function tagged(list, source, extra) {
-		list.source = source;
-		if (extra) Object.assign(list, extra);
-		return list;
-	}
+	async function listModels(provider) {
+		provider = provider || {};
+		const base = normalizeBaseURL(provider.baseURL);
+		const key = String(provider.apiKey || "").trim();
 
-	async function listModels(overrides) {
-		const cfg = config(overrides);
-		const suggested = modelSuggestions(overrides);
+		if (!base) throw new Error("请先填写 Base URL");
+		if (!key) throw new Error("请先填写 API Key");
 
-		if (!cfg.apiKey) {
-			return tagged(suggested, "catalog");
-		}
-
-		const urls = modelURLs(cfg.baseURL);
-		if (!urls.length) return tagged(suggested, "catalog");
-
+		const urls = modelURLs(base);
 		let lastError = null;
+
 		for (const url of urls) {
 			try {
-				const data = await getJSON(url, {
-					"Authorization": "Bearer " + cfg.apiKey
-				}, Math.min(cfg.timeoutMs, 20000));
-
-				const ids = extractModelIds(data);
-				if (!ids.length) {
-					lastError = new Error(url + " 返回成功但没有模型列表");
+				const data = await getJSON(url, { "Authorization": "Bearer " + key }, 20000);
+				const models = extractModelIds(data);
+				if (!models.length) {
+					lastError = new Error(url + " 返回成功，但没有识别到模型列表");
 					continue;
 				}
-
-				// 内置目录在前（顺序稳定），接口返回的后置，整体去重
-				return tagged(Array.from(new Set(suggested.concat(ids))), "api");
+				return { models: models, url: url };
 			}
 			catch (e) {
 				lastError = e;
@@ -296,67 +332,40 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		if (suggested.length) {
-			return tagged(suggested, "catalog-error", {
-				error: String((lastError && lastError.message) || lastError || "未知错误"),
-				tried: urls
-			});
-		}
-		throw lastError || new Error("模型列表接口不可用");
+		const err = new Error(String((lastError && lastError.message) || lastError || "模型列表接口不可用"));
+		err.tried = urls;
+		throw err;
 	}
 
-	/**
-	 * 连通性自检：只验证「接口通、鉴权对、模型名有效」，不关心模型说什么。
-	 * 故意用 max_tokens=16，避免为一次测试烧掉一整轮对话的额度。
-	 */
-	async function testConnection(overrides) {
-		const cfg = config(overrides);
-		if (!cfg.apiKey) {
-			return { ok: false, error: "尚未填写 API Key" };
-		}
-		const started = Date.now();
-		try {
-			const data = await postJSON(cfg.baseURL + "/chat/completions", {
-				"Content-Type": "application/json",
-				"Authorization": "Bearer " + cfg.apiKey
-			}, {
-				model: cfg.chatModel,
-				messages: [{ role: "user", content: "ping" }],
-				max_tokens: 16,
-				stream: false
-			}, Math.min(cfg.timeoutMs, 30000));
-
-			const finish = data && data.choices && data.choices[0] && data.choices[0].finish_reason;
-			return {
-				ok: true,
-				ms: Date.now() - started,
-				model: (data && data.model) || cfg.chatModel,
-				finish: finish || ""
-			};
-		}
-		catch (e) {
-			return { ok: false, ms: Date.now() - started, error: String((e && e.message) || e) };
-		}
-	}
+	// ------------------------------------------------------------------ 补全
 
 	/**
 	 * 统一补全入口。
 	 * @param {Object} opts
 	 *   messages  [{role, content}]
-	 *   model     可选，默认 chatModel；传 "extract" 走便宜模型
+	 *   model     "extract" 走抽取模型，缺省走对话模型
 	 *   json      true 时要求返回 JSON 对象
 	 *   maxTokens 可选覆盖
 	 * @returns {Promise<string>} 模型返回的 content 文本
 	 */
 	async function complete(opts) {
 		const cfg = config();
-		if (!cfg.apiKey) {
-			const err = new Error("PaperLoom: 尚未配置 API Key（设置 → PaperLoom）");
+		const target = opts.model === "extract" ? cfg.extract : cfg.chat;
+
+		if (!target) {
+			const err = new Error(opts.model === "extract"
+				? "尚未选择「图谱抽取模型」：设置 → 模型服务商里添加服务商并选择模型"
+				: "尚未选择「对话模型」：设置 → 模型服务商里添加服务商并选择模型");
+			err.code = "NO_MODEL";
+			throw err;
+		}
+		if (!target.apiKey) {
+			const err = new Error("服务商「" + target.providerName + "」没有填写 API Key");
 			err.code = "NO_API_KEY";
 			throw err;
 		}
 
-		const model = opts.model === "extract" ? cfg.extractModel : (opts.model || cfg.chatModel);
+		const model = target.model;
 		const maxTokens = Math.max(S.LIMITS.llmMinMaxTokens, opts.maxTokens || cfg.maxTokens);
 
 		const payload = {
@@ -370,25 +379,23 @@ PaperLoom.LLM = (function () {
 			payload.response_format = { type: "json_object" };
 		}
 
-		const cacheKey = S.hash(cfg.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
+		const cacheKey = S.hash(target.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
 
 		if (cfg.useCache) {
 			const cached = await PaperLoom.Storage.readCache(cacheKey);
 			if (cached !== null) {
 				try {
-					const parsed = JSON.parse(cached);
-					log("cache hit " + cacheKey);
-					return parsed.content;
+					return JSON.parse(cached).content;
 				}
-				catch (e) { /* 缓存损坏则忽略，继续请求 */ }
+				catch (e) { /* 缓存损坏则忽略 */ }
 			}
 		}
 
 		const data = await postJSON(
-			cfg.baseURL + "/chat/completions",
+			target.baseURL + "/chat/completions",
 			{
 				"Content-Type": "application/json",
-				"Authorization": "Bearer " + cfg.apiKey
+				"Authorization": "Bearer " + target.apiKey
 			},
 			payload,
 			cfg.timeoutMs
@@ -397,7 +404,7 @@ PaperLoom.LLM = (function () {
 		const choice = data && data.choices && data.choices[0];
 		let content = choice && choice.message && choice.message.content;
 
-		// 必踩的坑：推理模型把 reasoning token 计入 completion，token 不够时 content 为空。
+		// 推理模型把 reasoning token 计入 completion，token 不够时 content 为空
 		if (!content || !String(content).trim()) {
 			const reason = choice && choice.finish_reason;
 			if (reason === "length") {
@@ -409,7 +416,9 @@ PaperLoom.LLM = (function () {
 
 		if (cfg.useCache) {
 			try {
-				await PaperLoom.Storage.writeCache(cacheKey, JSON.stringify({ content: content, model: model, at: S.nowISO() }));
+				await PaperLoom.Storage.writeCache(cacheKey, JSON.stringify({
+					content: content, model: model, provider: target.providerName, at: S.nowISO()
+				}));
 			}
 			catch (e) { log("缓存写入失败: " + e); }
 		}
@@ -435,7 +444,7 @@ PaperLoom.LLM = (function () {
 		return null;
 	}
 
-	/** 要求 JSON 输出的便捷封装，失败自动重试一次并显式提醒只输出 JSON */
+	/** 要求 JSON 输出的便捷封装，失败自动重试一次 */
 	async function completeJSON(opts) {
 		const text = await complete(Object.assign({}, opts, { json: true }));
 		let parsed = parseJSON(text);
@@ -451,8 +460,50 @@ PaperLoom.LLM = (function () {
 		return parsed;
 	}
 
+	/**
+	 * 连通性自检：只验证「接口通、鉴权对、模型名有效」，不关心模型说什么。
+	 * @param {{baseURL:string, apiKey:string, model:string}} target
+	 */
+	async function testConnection(target) {
+		const t = target || config().chat;
+		if (!t) return { ok: false, error: "尚未选择模型" };
+		if (!t.apiKey) return { ok: false, error: "该服务商没有填写 API Key" };
+
+		const started = Date.now();
+		try {
+			const data = await postJSON(t.baseURL + "/chat/completions", {
+				"Content-Type": "application/json",
+				"Authorization": "Bearer " + t.apiKey
+			}, {
+				model: t.model,
+				messages: [{ role: "user", content: "ping" }],
+				max_tokens: 16,
+				stream: false
+			}, Math.min(parseInt(getPref("timeoutMs", 90000), 10) || 90000, 30000));
+
+			const finish = data && data.choices && data.choices[0] && data.choices[0].finish_reason;
+			return {
+				ok: true,
+				ms: Date.now() - started,
+				model: (data && data.model) || t.model,
+				finish: finish || ""
+			};
+		}
+		catch (e) {
+			return { ok: false, ms: Date.now() - started, error: String((e && e.message) || e) };
+		}
+	}
+
 	return {
-		complete, completeJSON, parseJSON, config, isConfigured,
-		testConnection, listModels, modelSuggestions, detectProvider, postJSON
+		// 服务商
+		getProviders, saveProviders, newProviderID, migrateLegacy,
+		makeRef, parseRef, resolveRef,
+		// 配置与调用
+		config, isConfigured,
+		complete, completeJSON, parseJSON, testConnection,
+		// 模型查询
+		listModels, extractModelIds, modelURLs,
+		// 兼容旧调用
+		log
 	};
 })();

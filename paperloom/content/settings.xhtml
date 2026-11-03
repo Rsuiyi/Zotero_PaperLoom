@@ -5,17 +5,16 @@
 	<title>PaperLoom 设置</title>
 	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
 	<style>
-		/* 设置界面只有这一份实现：
-		   ?embed=1 时嵌进 Zotero 设置面板，否则作为独立窗口打开。 */
+		/* 设置界面只有这一份实现：?embed=1 时嵌进 Zotero 设置面板，否则独立窗口 */
 		html, body { height: 100%; }
 		body {
 			font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 			margin: 0; padding: 20px 24px 76px; color: #1f2328; background: #fff;
-			overflow-y: auto;              /* 内容超出时右侧出滑条，不用拉大窗口 */
+			overflow-y: auto;
 			box-sizing: border-box;
 		}
 		h1 { font-size: 18px; margin: 0 0 4px; }
-		h2 { font-size: 14px; margin: 0 0 10px; color: #1f2328; }
+		h2 { font-size: 14px; margin: 0 0 10px; }
 		.section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 		.section-head h2 { margin: 0; }
 		.pl-hint { color: #6a737d; margin: 0 0 18px; }
@@ -27,9 +26,17 @@
 			padding: 5px 8px; border: 1px solid #d1d5da; border-radius: 5px; font: inherit; background: #fff;
 		}
 		.row input[type="text"], .row input[type="password"], .row input[type="number"] { flex: 1; }
-		.row select { max-width: 260px; }
+		.row select { min-width: 280px; max-width: 100%; }
 		.row .unit { color: #6a737d; font-size: 12px; }
 		.desc { color: #6a737d; font-size: 12px; margin: 2px 0 0 160px; }
+
+		/* 服务商表格 */
+		.pl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+		.pl-table th, .pl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eaecef; vertical-align: middle; }
+		.pl-table th { color: #6a737d; font-weight: 600; }
+		.pl-table td.url { color: #6a737d; word-break: break-all; }
+		.pl-table button { padding: 2px 8px; font-size: 12px; margin-right: 4px; }
+		.pl-empty-row { color: #6a737d; text-align: center; padding: 14px 0; }
 
 		footer {
 			position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 24px;
@@ -44,7 +51,6 @@
 		#status.err { color: #cf222e; }
 		#status.busy { color: #6a737d; }
 
-		/* 嵌进 Zotero 设置面板时：去掉自己的标题与关闭按钮，省出高度 */
 		body.pl-embed { padding: 0 0 60px; background: transparent; }
 		body.pl-embed h1, body.pl-embed .pl-hint { display: none; }
 		body.pl-embed footer { position: sticky; left: auto; right: auto; padding: 8px 0; background: transparent; }
@@ -52,45 +58,46 @@
 </head>
 <body>
 	<h1>PaperLoom 设置</h1>
-	<p class="pl-hint">配置只保存在本机 Zotero 偏好中；只有提问时选中的上下文会发送到你填写的接口。</p>
+	<p class="pl-hint">先添加模型服务商（Base URL + API Key），获取它实际提供的模型，再分别指定对话模型与图谱抽取模型。所有配置只保存在本机。</p>
 
 	<section>
 		<div class="section-head">
-			<h2>大模型接口（OpenAI 兼容）</h2>
+			<h2>模型服务商</h2>
 			<span style="flex:1"></span>
-			<button type="button" id="btn-models" title="调用 GET /models 拉取可用模型">拉取模型列表</button>
+			<button type="button" id="btn-add-provider" class="pl-primary">新增服务商</button>
 		</div>
 
-		<div class="row">
-			<label for="apiBase">API Base URL</label>
-			<input type="text" id="apiBase" placeholder="https://api.deepseek.com/v1" />
-		</div>
-		<div class="desc">填到 <code>/v1</code> 为止，插件会自动拼接 <code>/chat/completions</code> 与 <code>/models</code>。</div>
+		<table class="pl-table">
+			<thead>
+				<tr><th>名称</th><th>Base URL</th><th>模型数</th><th style="width:200px">操作</th></tr>
+			</thead>
+			<tbody id="providers-body"></tbody>
+		</table>
+		<div class="pl-empty-row" id="providers-empty">还没有服务商。点右上「新增服务商」。</div>
+	</section>
 
-		<div class="row">
-			<label for="apiKey">API Key</label>
-			<input type="password" id="apiKey" placeholder="sk-..." />
-			<button type="button" id="btn-eye" title="显示/隐藏">显示</button>
-		</div>
-
+	<section>
+		<h2>模型选择</h2>
 		<div class="row">
 			<label for="chatModelSel">对话模型</label>
-			<select id="chatModelSel">
-				<option value="">（自动载入）</option>
-			</select>
-			<input type="text" id="chatModel" placeholder="deepseek-v4-pro" style="max-width:220px" />
+			<select id="chatModelSel"></select>
 		</div>
-		<div class="desc">左边下拉选，右边可手动改。回答问题时使用，建议能力更强、上下文更长的模型。</div>
+		<div class="desc">回答问题时使用，建议选能力更强、上下文更长的模型。</div>
 
 		<div class="row">
-			<label for="extractModelSel">抽取模型</label>
-			<select id="extractModelSel">
-				<option value="">（自动载入）</option>
-			</select>
-			<input type="text" id="extractModel" placeholder="deepseek-v4-flash" style="max-width:220px" />
+			<label for="extractModelSel">图谱抽取模型</label>
+			<select id="extractModelSel"></select>
 		</div>
-		<div class="desc">建图谱、抽概念、抽记忆时使用，选便宜、速度快的模型即可。</div>
+		<div class="desc">建图谱、抽概念与记忆时使用，可以和对话模型来自不同服务商。</div>
 
+		<div class="row">
+			<label></label>
+			<button type="button" id="btn-test">测试所选对话模型</button>
+		</div>
+	</section>
+
+	<section>
+		<h2>通用参数</h2>
 		<div class="row">
 			<label for="maxTokens">max_tokens</label>
 			<input type="number" id="maxTokens" min="1024" step="1024" style="max-width:160px" />
@@ -112,7 +119,7 @@
 		<div class="row">
 			<label for="useCache">缓存结果</label>
 			<input type="checkbox" id="useCache" />
-			<span class="unit">按提示词哈希缓存，开发期重复调试不烧钱</span>
+			<span class="unit">按提示词哈希缓存</span>
 		</div>
 	</section>
 
@@ -130,7 +137,6 @@
 
 	<footer>
 		<button id="btn-save" class="pl-primary">保存</button>
-		<button id="btn-test">测试连接</button>
 		<button id="btn-close">关闭</button>
 		<span id="status"></span>
 	</footer>

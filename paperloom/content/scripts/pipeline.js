@@ -259,7 +259,7 @@ PaperLoom.Pipeline = (function () {
 			const turn = await recordTurn({
 				paperId: opts.item ? opts.item.key : null,
 				query: query,
-				answer: "**未配置 LLM API Key**，以下是本地 BM25 检索到的证据，可直接点击引用跳转原文。",
+				answer: "**尚未选择模型**，以下是本地 BM25 检索到的证据，可直接点击引用跳转原文。请到 设置 → PaperLoom 添加服务商并选择模型。",
 				citations: currentHits.concat(libraryHits).map(h => ({
 					paperId: h.chunk.paperId, page: h.chunk.page,
 					chunkId: h.chunk.chunkId, quote: h.chunk.text.slice(0, 160)
@@ -456,7 +456,7 @@ PaperLoom.Pipeline = (function () {
 	async function rebuildGraph(items, onProgress) {
 		const progress = onProgress || function () { };
 		if (!PaperLoom.LLM.isConfigured()) {
-			throw new Error("未配置 API Key，无法抽取概念与关系");
+			throw new Error("尚未选择模型，无法抽取概念与关系。请到 设置 → PaperLoom 添加服务商并选择模型");
 		}
 
 		const summary = { papers: 0, addedNodes: 0, addedEdges: 0, rejected: 0, failed: [] };

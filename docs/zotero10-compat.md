@@ -11,13 +11,15 @@
 
 | 问题 | 别人怎么做 | 我们怎么做 |
 |---|---|---|
-| 模型列表 | AI Sidebar 内置供应商 `MODEL_CATALOG`；PDF2zh 点按钮实拉，且 **DeepSeek 用 `https://api.deepseek.com/models`（不带 `/v1`）** | 内置目录打底 + 按 provider 依次尝试 `/models` 候选地址，结果合并 |
+| 模型管理 | PDF2zh：服务商是一个列表，「新增服务」弹窗里填 Base URL + Key → 获取模型列表 → 勾选保存 | 同样的结构：`providers[]` + 新增/编辑弹窗 + 表格 |
+| 模型来源 | 只认接口真实返回的 `/models` | 不再内置任何模型目录，接口返回什么就显示什么 |
 | 请求通道 | PDF2zh 优先 `Zotero.HTTP.request`，失败才 `fetch` | 同样 HTTP 优先，fetch 兜底 |
 | 响应解析 | PDF2zh 兼容 `data` / `models` / `result` / 纯数组，并去掉 Gemini 的 `models/` 前缀 | 同一套 `extractModelIds()` |
+| 端点 | PDF2zh 对 DeepSeek 特判成不带 `/v1` 的地址 | 按 `{base}/models` 与去 `/v1` 两个候选依次尝试 |
 | 常驻入口 | AI Sidebar 往 `#zotero-items-toolbar` 插入 `toolbarbutton`（flex spacer 之前） | 同样插 `#paperloom-toolbar-btn`，点击打开对话页；窗口卸载时移除 |
 
-> 结论一：DeepSeek 的 `/v1/models` 不可用，必须走 `https://api.deepseek.com/models`。
-> 结论二：模型下拉框不能只依赖网络接口，内置目录要打底，接口失败时才不会变成空列表。
+> 结论一：模型必须归属到用户显式添加的服务商，按 base URL 猜供应商会给出该站点根本没有的模型。
+> 结论二：对话模型与抽取模型是**两个独立的引用**（`providerId|model`），允许来自不同站点。
 
 ## 0. 适配策略
 

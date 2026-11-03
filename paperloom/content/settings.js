@@ -1,21 +1,18 @@
 /* PaperLoom — settings.js
- * L3 表现层：设置界面（独立窗口 / Zotero 设置面板内嵌共用同一份）。
+ * L3 表现层：设置界面（独立窗口 / Zotero 设置面板内嵌共用）。
  *
- * 设计要点：
- *   1. 只有这一份实现，?embed=1 表示嵌在 Zotero 设置面板里；
- *   2. 模型下拉框通过 GET /models 实时拉取，取不到就保留手动输入；
- *   3. 所有偏好写入都做类型转换（int 型偏好不能写字符串）。
+ * 结构对齐 PDF2zh：
+ *   1. 服务商是一个列表（名称 / Base URL / 模型数），可新增、编辑、删除；
+ *   2. 「新增服务商」弹一个小窗口，填 Base URL + API Key，点「获取模型列表」；
+ *   3. 外面用两个下拉框，分别选对话模型与图谱抽取模型，可选不同服务商。
  */
 (function () {
 	"use strict";
 
 	const EMBED = new URLSearchParams(location.search).get("embed") === "1";
+	const NS = "extensions.paperloom.";
 
-	/**
-	 * 安全地找 Zotero 对象。
-	 * 每一条候选都单独 try/catch：跨域访问会抛 SecurityError，
-	 * 一条抛错不能把整个脚本炸掉（那会表现成"按钮完全没反应"）。
-	 */
+	/** 安全找 Zotero：跨域访问会抛错，一条失败不能炸掉整个脚本 */
 	function pickZotero() {
 		const candidates = [
 			() => (window.arguments && window.arguments[0] && window.arguments[0].Zotero),
@@ -52,20 +49,6 @@
 	const Zotero = pickZotero();
 	const PL = pickPaperLoom(Zotero);
 
-	// 偏好键统一带前缀，和 prefs.js 保持一致
-	const PREFIX = "extensions.paperloom.";
-	const FIELDS = [
-		{ id: "apiBase", key: "apiBase", type: "string" },
-		{ id: "apiKey", key: "apiKey", type: "string" },
-		{ id: "chatModel", key: "chatModel", type: "string" },
-		{ id: "extractModel", key: "extractModel", type: "string" },
-		{ id: "maxTokens", key: "maxTokens", type: "int" },
-		{ id: "temperature", key: "temperature", type: "string" },
-		{ id: "timeoutMs", key: "timeoutMs", type: "int" },
-		{ id: "useCache", key: "useCache", type: "bool" },
-		{ id: "dataDir", key: "dataDir", type: "string" }
-	];
-
 	const $ = (id) => document.getElementById(id);
 
 	function setStatus(text, kind) {
@@ -75,33 +58,32 @@
 		el.className = kind || "";
 	}
 
-	/** 读取一个偏好，带默认值兜底 */
-	function readPref(key, type) {
-		let v;
+	function prefGet(key, fallback) {
 		try {
-			v = Zotero.Prefs.get(PREFIX + key, true);
+			const v = Zotero.Prefs.get(NS + key, true);
+			return (v === undefined || v === null || v === "") ? fallback : v;
 		}
 		catch (e) {
-			v = undefined;
+			return fallback;
 		}
-		if (v === undefined || v === null) {
-			return type === "bool" ? true : "";
-		}
-		return v;
 	}
 
-	function load() {
-		if (!Zotero) {
-			setStatus("拿不到 Zotero 对象，设置无法读写", "err");
-			return;
+	function prefSet(key, value) {
+		try {
+			Zotero.Prefs.set(NS + key, value, true);
 		}
-		for (const f of FIELDS) {
-			const el = $(f.id);
-			if (!el) continue;
-			const v = readPref(f.key, f.type);
-			if (f.type === "bool") el.checked = v !== false;
-			else el.value = v === undefined ? "" : String(v);
-		}
+		catch (e) { /* 记不下来也不影响当前界面 */ }
+	}
+
+	// ------------------------------------------------------------------ 通用参数
+
+	function loadParams() {
+		$("maxTokens").value = String(prefGet("maxTokens", 4096));
+		$("temperature").value = String(prefGet("temperature", "0.3"));
+		$("timeoutMs").value = String(prefGet("timeoutMs", 90000));
+		$("useCache").checked = prefGet("useCache", true) !== false;
+		$("dataDir").value = String(prefGet("dataDir", ""));
+
 		try {
 			$("resolvedDir").textContent = PL ? PL.Storage.root() : "—";
 		}
@@ -110,140 +92,170 @@
 		}
 	}
 
-	function save() {
-		if (!Zotero) return false;
-		try {
-			for (const f of FIELDS) {
-				const el = $(f.id);
-				if (!el) continue;
-				if (f.type === "bool") {
-					Zotero.Prefs.set(PREFIX + f.key, !!el.checked, true);
-				}
-				else if (f.type === "int") {
-					const n = parseInt(el.value, 10);
-					// 非法输入不写，避免把偏好污染成 NaN
-					if (Number.isFinite(n)) Zotero.Prefs.set(PREFIX + f.key, n, true);
-				}
-				else {
-					Zotero.Prefs.set(PREFIX + f.key, String(el.value || "").trim(), true);
-				}
-			}
-			setStatus("已保存", "ok");
-			return true;
-		}
-		catch (e) {
-			setStatus("保存失败：" + e, "err");
-			return false;
+	function saveParams() {
+		const n = parseInt($("maxTokens").value, 10);
+		if (Number.isFinite(n)) prefSet("maxTokens", n);
+
+		prefSet("temperature", String($("temperature").value || "0.3").trim());
+
+		const t = parseInt($("timeoutMs").value, 10);
+		if (Number.isFinite(t)) prefSet("timeoutMs", t);
+
+		prefSet("useCache", !!$("useCache").checked);
+		prefSet("dataDir", String($("dataDir").value || "").trim());
+
+		setStatus("已保存", "ok");
+	}
+
+	// ------------------------------------------------------------------ 服务商列表
+
+	function renderProviders() {
+		const body = $("providers-body");
+		const table = body.closest("table");
+		if (!body || !PL) return;
+
+		const providers = PL.LLM.getProviders();
+		body.innerHTML = "";
+
+		$("providers-empty").style.display = providers.length ? "none" : "block";
+		if (table) table.style.display = providers.length ? "table" : "none";
+
+		for (const p of providers) {
+			const tr = document.createElement("tr");
+
+			const name = document.createElement("td");
+			name.textContent = p.name || "（未命名）";
+
+			const url = document.createElement("td");
+			url.className = "url";
+			url.textContent = p.baseURL || "";
+
+			const count = document.createElement("td");
+			count.textContent = String((p.models && p.models.length) || 0);
+
+			const ops = document.createElement("td");
+			const edit = document.createElement("button");
+			edit.textContent = "编辑";
+			edit.addEventListener("click", () => openProviderDialog(p.id));
+			const del = document.createElement("button");
+			del.textContent = "删除";
+			del.addEventListener("click", () => removeProvider(p.id));
+			ops.appendChild(edit);
+			ops.appendChild(del);
+
+			tr.appendChild(name);
+			tr.appendChild(url);
+			tr.appendChild(count);
+			tr.appendChild(ops);
+			body.appendChild(tr);
 		}
 	}
 
-	/**
-	 * 用接口返回的模型列表填充两个下拉框。
-	 * 当前值不在列表里时也保留一项，避免"配置看起来丢了"。
-	 */
-	function fillSelect(sel, models, current) {
-		if (!sel) return;
-		const keep = sel.value;
+	function removeProvider(id) {
+		if (!PL) return;
+		const p = PL.LLM.getProviders().find(x => x.id === id);
+		if (!p) return;
+
+		let ok = true;
+		try {
+			ok = window.confirm("删除服务商「" + (p.name || p.baseURL) + "」？依赖它的模型选择会失效。");
+		}
+		catch (e) { /* 某些上下文没有 confirm，直接执行 */ }
+
+		if (!ok) return;
+
+		PL.LLM.saveProviders(PL.LLM.getProviders().filter(x => x.id !== id));
+
+		// 清掉指向该服务商的引用，避免留下"已失效"的死配置
+		for (const key of ["chatModelRef", "extractModelRef"]) {
+			const parsed = PL.LLM.parseRef(prefGet(key, ""));
+			if (parsed && parsed.providerId === id) prefSet(key, "");
+		}
+
+		renderProviders();
+		renderModelSelects();
+		setStatus("已删除服务商", "ok");
+	}
+
+	function openProviderDialog(providerId) {
+		const url = "chrome://paperloom/content/provider.xhtml";
+		try {
+			window.openDialog(url, "paperloom-provider",
+				"chrome,centerscreen,resizable,width=680,height=700",
+				{ providerId: providerId || "", Zotero: Zotero, PaperLoom: PL });
+		}
+		catch (e) {
+			setStatus("打开服务商窗口失败：" + e, "err");
+		}
+	}
+
+	// ------------------------------------------------------------------ 模型下拉框
+
+	function fillModelSelect(sel, refKey) {
+		if (!sel || !PL) return;
+
+		const providers = PL.LLM.getProviders();
+		const current = String(prefGet(refKey, ""));
+		let found = false;
+
 		sel.innerHTML = "";
 
-		const placeholder = document.createElement("option");
-		placeholder.value = "";
-		placeholder.textContent = models.length ? "选择模型…" : "（拉取失败，可手动填写）";
-		sel.appendChild(placeholder);
+		const ph = document.createElement("option");
+		ph.value = "";
+		ph.textContent = providers.length ? "请选择模型…" : "（还没有服务商，请先新增）";
+		sel.appendChild(ph);
 
-		const values = models.slice();
-		for (const extra of [current, keep]) {
-			if (extra && !values.includes(extra)) values.unshift(extra);
-		}
+		for (const p of providers) {
+			if (!p.models || !p.models.length) continue;
 
-		for (const id of values) {
-			if (!id) continue;
-			const opt = document.createElement("option");
-			opt.value = id;
-			opt.textContent = id;
-			sel.appendChild(opt);
-		}
+			const group = document.createElement("optgroup");
+			group.label = p.name || p.baseURL;
 
-		sel.value = current && values.includes(current) ? current : "";
-	}
-
-	/** 表单当前值：拉取时必须用它，而不是"上次保存的偏好" */
-	function formConfig() {
-		return {
-			baseURL: $("apiBase").value.trim(),
-			apiKey: $("apiKey").value.trim(),
-			chatModel: $("chatModel").value.trim(),
-			extractModel: $("extractModel").value.trim()
-		};
-	}
-
-	async function pullModels(silent) {
-		if (!PL || !PL.LLM) {
-			if (!silent) setStatus("领域层未加载，无法拉取模型列表", "err");
-			return;
-		}
-
-		const cfg = formConfig();
-		if (!cfg.apiKey) {
-			// 没有 Key 时仍展示内置目录，但要说清楚"这不是接口返回的"
-			const cat = PL.LLM.modelSuggestions(cfg);
-			fillSelect($("chatModelSel"), cat, cfg.chatModel);
-			fillSelect($("extractModelSel"), cat, cfg.extractModel);
-			if (!silent) {
-				setStatus(cat.length
-					? "请先填写 API Key；当前仅显示内置目录（" + cat.length + " 个）"
-					: "请先填写 API Key 与 Base URL", "err");
+			for (const m of p.models) {
+				const ref = PL.LLM.makeRef(p.id, m);
+				const opt = document.createElement("option");
+				opt.value = ref;
+				opt.textContent = m;
+				if (ref === current) {
+					opt.selected = true;
+					found = true;
+				}
+				group.appendChild(opt);
 			}
-			return;
+			sel.appendChild(group);
 		}
 
-		if (!silent) setStatus("正在向 " + cfg.baseURL + " 请求模型列表…", "busy");
-		try {
-			const models = await PL.LLM.listModels(cfg);
-			const chat = $("chatModel").value;
-			const extract = $("extractModel").value;
-			fillSelect($("chatModelSel"), models || [], chat);
-			fillSelect($("extractModelSel"), models || [], extract);
-
-			if (!silent) {
-				// models.source 由 llm.listModels 标记：api / api-empty / catalog / catalog-error
-				const src = models && models.source;
-				if (!models || !models.length) {
-					setStatus("没有取到模型，请手动填写模型名", "err");
-				}
-				else if (src === "api") {
-					setStatus("已从接口获取 " + models.length + " 个模型（含内置目录）", "ok");
-				}
-				else if (src === "api-empty") {
-					setStatus("接口没有返回模型，已用内置目录（" + models.length + " 个）", "ok");
-				}
-				else if (src === "catalog-error") {
-					const tried = (models.tried && models.tried[0]) || "";
-					setStatus("接口请求失败：" + (models.error || "未知错误")
-						+ (tried ? "（" + tried + "）" : "")
-						+ "；已退回内置目录", "err");
-				}
-				else {
-					setStatus("已载入内置目录（" + models.length + " 个）；填 Key 后可拉接口列表", "ok");
-				}
-			}
-		}
-		catch (e) {
-			fillSelect($("chatModelSel"), [], $("chatModel").value);
-			fillSelect($("extractModelSel"), [], $("extractModel").value);
-			if (!silent) setStatus("拉取失败：" + (e && e.message || e) + "（仍可手动填写）", "err");
+		// 当前引用已失效（服务商被删/模型被改名）时保留一项提示，而不是悄悄清空
+		if (current && !found) {
+			const stale = document.createElement("option");
+			stale.value = current;
+			stale.textContent = "（已失效：需要重新选择）";
+			stale.selected = true;
+			sel.appendChild(stale);
 		}
 	}
 
-	async function test() {
-		if (!PL || !PL.LLM) {
-			setStatus("领域层未加载，无法测试", "err");
+	function renderModelSelects() {
+		fillModelSelect($("chatModelSel"), "chatModelRef");
+		fillModelSelect($("extractModelSel"), "extractModelRef");
+	}
+
+	// ------------------------------------------------------------------ 测试
+
+	async function testSelected() {
+		if (!PL) {
+			setStatus("领域层未加载", "err");
 			return;
 		}
-		// 先保存，否则测的是旧配置
-		save();
-		setStatus("正在连接…", "busy");
-		const r = await PL.LLM.testConnection();
+		const ref = $("chatModelSel").value;
+		const target = PL.LLM.resolveRef(ref);
+		if (!target) {
+			setStatus("请先选择「对话模型」", "err");
+			return;
+		}
+
+		setStatus("正在连接 " + target.providerName + " / " + target.model + " …", "busy");
+		const r = await PL.LLM.testConnection(target);
 		if (r.ok) {
 			setStatus("连接成功 · " + r.model + " · " + r.ms + "ms", "ok");
 		}
@@ -252,20 +264,9 @@
 		}
 	}
 
-	function bindSelect(selId, inputId) {
-		const sel = $(selId);
-		const input = $(inputId);
-		if (!sel || !input) return;
-		sel.addEventListener("change", () => {
-			if (sel.value) {
-				input.value = sel.value;
-				setStatus("已选择 " + sel.value + "，记得保存", "ok");
-			}
-		});
-	}
+	// ------------------------------------------------------------------ 初始化
 
 	function init() {
-		// 任何一步抛错都必须显示在页面上，不能让它静默变成"按钮没反应"
 		try {
 			initSafe();
 		}
@@ -281,35 +282,41 @@
 			if (close) close.style.display = "none";
 		}
 
-		load();
-
 		if (!Zotero) {
-			setStatus("拿不到 Zotero 对象：请把本页当作独立窗口打开（工具 → PaperLoom → 设置…）", "err");
+			setStatus("拿不到 Zotero 对象：请用「工具 → PaperLoom → 设置…」打开独立窗口", "err");
+			return;
+		}
+		if (!PL) {
+			setStatus("拿不到 PaperLoom 领域层：请重启 Zotero 后重试", "err");
 			return;
 		}
 
-		$("btn-save").addEventListener("click", save);
-		$("btn-test").addEventListener("click", test);
-		// 点"拉取模型列表"时先把表单存下来：用户刚填的 Key/Base 必须被持久化，
-		// 否则后续对话仍用旧配置（PDF2zh 也是这个行为）
-		$("btn-models").addEventListener("click", () => {
-			save();
-			pullModels(false);
-		});
+		loadParams();
+		renderProviders();
+		renderModelSelects();
+
+		$("btn-add-provider").addEventListener("click", () => openProviderDialog(""));
+		$("btn-test").addEventListener("click", testSelected);
+		$("btn-save").addEventListener("click", saveParams);
 		if ($("btn-close")) $("btn-close").addEventListener("click", () => window.close());
 
-		$("btn-eye").addEventListener("click", () => {
-			const el = $("apiKey");
-			const showing = el.type === "text";
-			el.type = showing ? "password" : "text";
-			$("btn-eye").textContent = showing ? "显示" : "隐藏";
+		$("chatModelSel").addEventListener("change", (ev) => {
+			prefSet("chatModelRef", ev.target.value);
+			setStatus(ev.target.value ? "对话模型已更新" : "已清空对话模型", "ok");
+		});
+		$("extractModelSel").addEventListener("change", (ev) => {
+			prefSet("extractModelRef", ev.target.value);
+			setStatus(ev.target.value ? "抽取模型已更新" : "已清空抽取模型", "ok");
 		});
 
-		bindSelect("chatModelSel", "chatModel");
-		bindSelect("extractModelSel", "extractModel");
-
-		// 打开就载入模型目录（不联网也有内容）；有 Key 时会自动合并接口列表
-		pullModels(true);
+		// 服务商弹窗关闭后回到本窗口：重新渲染列表与下拉框
+		window.addEventListener("focus", () => {
+			try {
+				renderProviders();
+				renderModelSelects();
+			}
+			catch (e) { /* ignore */ }
+		});
 	}
 
 	if (document.readyState === "loading") {

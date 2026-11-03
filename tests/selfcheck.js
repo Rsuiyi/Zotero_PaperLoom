@@ -32,10 +32,16 @@ const IOUtils = {
 
 const PathUtils = { join: (...a) => path.join(...a) };
 
+// 迷你偏好存储：服务商注册表测试需要读写
+const prefStore = new Map();
+
 const Zotero = {
 	debug() { },
 	DataDirectory: { dir: path.join("/tmp", "zotero-test") },
-	Prefs: { get: () => undefined }
+	Prefs: {
+		get(key) { return prefStore.has(key) ? prefStore.get(key) : undefined; },
+		set(key, value) { prefStore.set(key, value); }
+	}
 };
 
 const sandbox = { IOUtils, PathUtils, Zotero, console, fetch: async () => { throw new Error("no network"); },
@@ -266,17 +272,30 @@ function section(t) { console.log("\n" + t); }
 
 	section("8. LLM 层");
 	{
-		check("未配置 Key 时 isConfigured=false", PL.LLM.isConfigured() === false);
+		check("未配置服务商时 isConfigured=false", PL.LLM.isConfigured() === false);
 		check("max_tokens 下限被钳制到 4096", PL.LLM.config().maxTokens >= 4096,
 			String(PL.LLM.config().maxTokens));
 		check("容错解析 ```json 包裹", PL.LLM.parseJSON('```json\n{"a":1}\n```').a === 1);
 		check("容错解析前后带废话", PL.LLM.parseJSON('好的：{"a":2} 以上').a === 2);
+
+		// 没有选模型时应该明确报 NO_MODEL，而不是发一个空请求
 		try {
 			await PL.LLM.complete({ messages: [] });
-			check("无 Key 时抛 NO_API_KEY", false);
+			check("未选模型时抛 NO_MODEL", false);
 		}
 		catch (e) {
-			check("无 Key 时抛 NO_API_KEY", e.code === "NO_API_KEY", e.message);
+			check("未选模型时抛 NO_MODEL", e.code === "NO_MODEL", e.message);
+		}
+
+		// 选了模型但服务商没填 Key → NO_API_KEY
+		PL.LLM.saveProviders([{ id: "p_test", name: "测试站", baseURL: "https://example.com/v1", apiKey: "", models: ["m1"] }]);
+		Zotero.Prefs.set("extensions.paperloom.chatModelRef", "p_test|m1");
+		try {
+			await PL.LLM.complete({ messages: [] });
+			check("服务商无 Key 时抛 NO_API_KEY", false);
+		}
+		catch (e) {
+			check("服务商无 Key 时抛 NO_API_KEY", e.code === "NO_API_KEY", e.message);
 		}
 	}
 
@@ -409,19 +428,36 @@ function section(t) { console.log("\n" + t); }
 			PL.Compat.describe());
 	}
 
-	section("12. 模型目录（不依赖网络的兜底）");
+	section("12. 服务商注册表（模型只来自接口，不编造）");
 	{
-		const deepseek = PL.LLM.modelSuggestions({ baseURL: "https://api.deepseek.com/v1" });
-		check("DeepSeek 内置目录非空", deepseek.length >= 2, JSON.stringify(deepseek));
-		check("★ 内置目录使用 v4 模型（旧 deepseek-chat 已过时）",
-			deepseek.every(m => /^deepseek-v4/.test(m)), JSON.stringify(deepseek));
+		const providers = PL.LLM.getProviders();
+		check("能读回已保存的服务商", providers.length === 1 && providers[0].id === "p_test",
+			JSON.stringify(providers));
 
-		const unknown = PL.LLM.modelSuggestions({ baseURL: "https://example.com/v1" });
-		check("未知供应商不编造模型", unknown.length === 0, JSON.stringify(unknown));
+		const ref = PL.LLM.makeRef("p_test", "m1");
+		check("makeRef/parseRef 往返一致", PL.LLM.parseRef(ref).providerId === "p_test"
+			&& PL.LLM.parseRef(ref).model === "m1", ref);
 
-		// 表单值必须覆盖已保存偏好，否则"刚填的 Key"点按钮不会生效
-		const withForm = PL.LLM.config({ baseURL: "https://api.deepseek.com/v1", apiKey: "sk-form-value" });
-		check("★ config 接受表单值覆盖偏好", withForm.apiKey === "sk-form-value", withForm.apiKey);
+		const target = PL.LLM.resolveRef(ref);
+		check("★ 引用能解析出服务商的 baseURL 与模型",
+			!!target && target.baseURL === "https://example.com/v1" && target.model === "m1",
+			JSON.stringify(target));
+
+		check("未知服务商的引用解析为 null", PL.LLM.resolveRef("nope|m1") === null);
+		check("没有内置模型目录（不再凭空出现模型）",
+			typeof PL.LLM.modelSuggestions === "undefined");
+
+		// 响应解析：OpenAI / 纯数组 / result 包装 / Gemini 的 models/ 前缀
+		check("解析 data 数组", PL.LLM.extractModelIds({ data: [{ id: "a" }, { id: "b" }] }).join(",") === "a,b");
+		check("解析纯数组", PL.LLM.extractModelIds(["c", "d"]).join(",") === "c,d");
+		check("解析 result.data", PL.LLM.extractModelIds({ result: { data: [{ id: "e" }] } }).join(",") === "e");
+		check("去掉 models/ 前缀", PL.LLM.extractModelIds({ data: [{ id: "models/f" }] }).join(",") === "f");
+
+		// 端点候选：带 /v1 的 base 要额外尝试去掉 /v1 的写法
+		const urls = PL.LLM.modelURLs("https://api.example.com/v1");
+		check("★ 模型端点同时尝试带/不带 /v1",
+			urls.includes("https://api.example.com/v1/models")
+			&& urls.includes("https://api.example.com/models"), JSON.stringify(urls));
 	}
 
 	console.log("\n" + "=".repeat(50));
