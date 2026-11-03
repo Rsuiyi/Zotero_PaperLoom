@@ -89,6 +89,7 @@ PaperLoom.Pipeline = (function () {
 6. graph_delta 的节点【优先复用】下面「已有概念节点」里的 nodeId（在 nodes 里填 nodeId 字段，edges 里用 source/target 填 nodeId）；只有确实是新概念才用 label 新建。概念总数不要超过 15 个。
 7. memory_delta 只记录关于【用户本人】的稳定偏好或状态，不记录论文内容。
 8. 遵守 <memory> 区块里的用户偏好（例如回答长度、是否用公式）。
+9. 「论文证据 · 当前论文」通常是该论文的完整原文（超出预算时为均匀摘录），不是关键词检索片段；总结、概述、介绍类问题直接依据它作答，不要声称"没有拿到正文"。
 
 只输出一个 JSON 对象：
 {
@@ -125,31 +126,45 @@ PaperLoom.Pipeline = (function () {
 		];
 	}
 
-	// -------------------------------------------------------------- 摘要兜底
+	// -------------------------------------------------------------- 当前论文直读
 
-	/** "讲讲这篇论文大概内容"这类问题：没有关键词，必须用开头的摘要/引言 */
-	function isSummaryQuery(q) {
-		return /(总结|概括|概述|大概内容|讲了什么|讲什么|主要讲|简单介绍|简单说明|简介|摘要|全文|主要内容|这篇论文|这篇文章|summar|overview|abstract|what.*paper.*about)/i
-			.test(String(q || ""));
+	/**
+	 * 当前论文不做关键词检索，直接把原文铺进 prompt。
+	 * 这是"选中论文 = 基于全文问答"的关键：BM25 只用于跨论文找证据，
+	 * 单篇问答如果先检索，中文问题问英文正文会直接 0 命中。
+	 *
+	 * 预算内全给；超预算时按块数均匀采样，保证首尾都在，覆盖全文而非只取开头。
+	 */
+	function directChunks(chunks, budgetChars) {
+		if (!chunks || !chunks.length) return [];
+
+		const total = chunks.reduce((sum, c) => sum + String(c.text || "").length, 0);
+		if (!budgetChars || total <= budgetChars) return chunks.slice();
+
+		const avg = total / chunks.length;
+		const maxCount = Math.max(1, Math.floor(budgetChars / Math.max(1, avg)));
+		if (maxCount >= chunks.length) return chunks.slice();
+
+		const stride = chunks.length / maxCount;
+		const picked = [];
+		for (let i = 0; i < chunks.length; i += stride) {
+			picked.push(chunks[Math.floor(i)]);
+		}
+		if (picked[0] !== chunks[0]) picked.unshift(chunks[0]);
+		if (picked[picked.length - 1] !== chunks[chunks.length - 1]) picked.push(chunks[chunks.length - 1]);
+		return picked;
 	}
 
-	/** 取论文开头作为证据：引言段优先，再按原文顺序补齐到 n 块 */
-	function leadingChunks(chunks, n) {
-		const limit = n || 6;
-		const out = [];
+	/** 按 chunkId 去重，保留先出现的（直读块优先，检索命中只补空缺） */
+	function dedupeHits(hits) {
 		const seen = new Set();
-
-		const push = (c) => {
-			if (!c || seen.has(c.chunkId) || out.length >= limit) return;
-			seen.add(c.chunkId);
-			out.push(c);
-		};
-
-		for (const c of chunks) {
-			if (c.section === "intro") push(c);
+		const out = [];
+		for (const h of hits) {
+			const id = h && h.chunk && h.chunk.chunkId;
+			if (!id || seen.has(id)) continue;
+			seen.add(id);
+			out.push(h);
 		}
-		for (const c of chunks) push(c);
-
 		return out;
 	}
 
@@ -228,26 +243,21 @@ PaperLoom.Pipeline = (function () {
 			PaperLoom.Memory.retrieve(query, { paperId: opts.item ? opts.item.key : null })
 		]);
 
-		// ★ 语言不一致兜底：
-		// 中文提问 + 英文正文时 BM25 往往 0 命中；总结类问题（"讲了什么"）本身也没有关键词。
-		// 这类情况直接用论文开头的摘要/引言当证据，而不是让模型说"没拿到材料"。
+		// ★ 当前论文直读：选中论文时不做关键词检索，直接把原文铺进 prompt。
+		// 检索只用于跨论文补充；单篇问答如果先过 BM25，中文问题问英文正文会 0 命中。
 		let currentHits = currentHitsRaw;
-		if (focusChunks.length) {
-			const wantSummary = isSummaryQuery(query);
-			if (!currentHits.length || wantSummary) {
-				const lead = leadingChunks(focusChunks, wantSummary ? 8 : 6);
-				const seen = new Set(currentHits.map(h => h.chunk.chunkId));
-				const extras = lead
-					.filter(c => !seen.has(c.chunkId))
-					.map(c => ({ chunk: c, score: 0 }));
-
-				if (extras.length) {
-					currentHits = currentHits.concat(extras);
-					if (!wantSummary) {
-						warnings.push("检索与正文语言可能不一致（0 命中），已改用论文开头的摘要/引言作为证据。");
-					}
+		const docsWithText = focusDocs.filter(d => (d.chunks || []).length);
+		if (docsWithText.length) {
+			// 约 4 万字符 ≈ 1.2 万 token，普通论文可整篇放入；多篇时平摊
+			const perDocBudget = Math.floor(40000 / docsWithText.length);
+			const direct = [];
+			for (const d of docsWithText) {
+				for (const c of directChunks(d.chunks, perDocBudget)) {
+					direct.push({ chunk: c, score: 0 });
 				}
 			}
+			// 直读块在前，检索命中只补空缺
+			currentHits = dedupeHits(direct.concat(currentHitsRaw));
 		}
 
 		let libraryHits = libraryHitsRaw;
