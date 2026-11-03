@@ -240,7 +240,7 @@
 			dpr: window.devicePixelRatio
 		});
 
-		const samples = [snap()];
+		const samples = [];
 
 		const paint = () => {
 			const el = $("win-geo");
@@ -250,22 +250,28 @@
 				+ " · 屏幕可用 " + s.availSize.join("×")
 				+ " · 缩放 " + s.dpr;
 		};
-		paint();
 
-		setTimeout(() => { samples.push(snap()); paint(); }, 600);
-		setTimeout(() => { samples.push(snap()); paint(); }, 1500);
-
-		setTimeout(() => {
+		// 一打开就记：写偏好（同步、一定成功）和文件（异步）
+		const record = () => {
 			try {
+				const s = snap();
+				samples.push(s);
+				try { Zotero.Prefs.set("extensions.paperloom.lastWindowGeometry", JSON.stringify(s), true); }
+				catch (e) { /* ignore */ }
 				if (PL && PL.Storage) {
 					PL.Storage.writeJSON("windowlog.json", {
 						at: new Date().toISOString(),
 						samples: samples
-					});
+					}).catch(() => { });
 				}
+				paint();
 			}
 			catch (e) { /* ignore */ }
-		}, 2000);
+		};
+
+		record();
+		window.setTimeout(record, 600);
+		window.setTimeout(record, 1500);
 	}
 
 	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */

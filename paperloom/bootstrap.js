@@ -494,10 +494,18 @@ function makeReaderButton(doc) {
 	const btn = doc.createElement("button");
 	btn.id = "paperloom-reader-btn";
 	btn.className = "toolbar-button";
-	btn.textContent = "PaperLoom";
 	btn.title = "显示 / 隐藏右侧 PaperLoom 面板";
-	btn.style.cssText = "height:26px;padding:0 10px;margin:0 6px;border:1px solid #c9c9c9;border-radius:6px;"
-		+ "background:#fff;color:#333;font-size:12px;cursor:pointer;line-height:24px;";
+	btn.style.cssText = "width:30px;height:26px;padding:0;margin:0 4px;display:inline-flex;"
+		+ "align-items:center;justify-content:center;border:1px solid #c9c9c9;border-radius:6px;"
+		+ "background:#fff;cursor:pointer;";
+
+	// 图标按钮：和阅读器其它工具按钮一致的观感
+	const img = doc.createElement("img");
+	img.src = "chrome://paperloom/content/icons/paperloom.svg";
+	img.alt = "PaperLoom";
+	img.style.cssText = "width:16px;height:16px;display:block;pointer-events:none;";
+	btn.appendChild(img);
+
 	btn.addEventListener("click", () => toggleDock(Zotero.getMainWindow()));
 	return btn;
 }
