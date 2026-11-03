@@ -685,3 +685,15 @@ body.pl-embed .pl-graph-layout {
 }
 
 .pl-footnote:hover { color: var(--pl-accent); }
+
+/* 图谱操作说明条 */
+.pl-graph-help {
+	flex: none;
+	padding: 4px 10px;
+	font-size: 11px;
+	color: var(--pl-text-dim);
+	background: var(--pl-panel);
+	border-bottom: 1px solid var(--pl-border);
+}
+
+body.pl-embed .pl-graph-help { display: none; }

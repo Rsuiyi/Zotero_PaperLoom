@@ -146,6 +146,7 @@
 		canvas.addEventListener("mouseup", onMouseUp);
 		canvas.addEventListener("mouseleave", onMouseUp);
 		canvas.addEventListener("wheel", onWheel, { passive: false });
+		canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 		window.addEventListener("resize", () => { resize(); draw(); });
 		window.addEventListener("message", (ev) => {
@@ -441,13 +442,10 @@
 		const byId = Object.create(null);
 		for (const n of view.nodes) byId[n.nodeId] = n;
 
-		const highlightIds = new Set();
-		if (selected) {
-			highlightIds.add(selected.nodeId);
-			for (const e of view.edges) {
-				if (e.source === selected.nodeId) highlightIds.add(e.target);
-				if (e.target === selected.nodeId) highlightIds.add(e.source);
-			}
+		// 高亮 = 选中的点 + 这些点出边指向的点
+		const highlightIds = new Set(selection);
+		for (const e of view.edges) {
+			if (selection.has(e.source)) highlightIds.add(e.target);
 		}
 
 		// 边
@@ -455,7 +453,7 @@
 			const a = byId[e.source], b = byId[e.target];
 			if (!a || !b) continue;
 			const pa = toScreen(a), pb = toScreen(b);
-			const isHi = selected && (e.source === selected.nodeId || e.target === selected.nodeId);
+			const isHi = selection.has(e.source) || selection.has(e.target);
 
 			ctx.beginPath();
 			ctx.moveTo(pa.x, pa.y);
@@ -492,7 +490,7 @@
 				: n.type === "claim" ? COLORS.claim
 					: cross ? COLORS.crossConcept : COLORS.concept;
 
-			const dim = selected && !highlightIds.has(n.nodeId);
+			const dim = selection.size > 0 && !highlightIds.has(n.nodeId);
 			ctx.globalAlpha = dim ? 0.3 : 1;
 
 			ctx.beginPath();
@@ -505,11 +503,17 @@
 			ctx.fillStyle = color;
 			ctx.fill();
 			if (selection.has(n.nodeId)) {
-				ctx.lineWidth = 2.5;
+				// 光晕 + 双层描边，确保一眼看出被选中
+				ctx.save();
+				ctx.shadowColor = "rgba(46,127,224,0.95)";
+				ctx.shadowBlur = 14;
+				ctx.lineWidth = 3.5;
 				ctx.strokeStyle = "#fff";
 				ctx.stroke();
-				ctx.lineWidth = 1.2;
-				ctx.strokeStyle = color;
+				ctx.restore();
+
+				ctx.lineWidth = 1.8;
+				ctx.strokeStyle = "#2e7fe0";
 				ctx.stroke();
 			}
 			if (hover && hover.nodeId === n.nodeId) {
@@ -585,7 +589,8 @@
 		const node = pick(sx, sy);
 
 		// 中键 / Alt 拖拽 = 平移画布（左键留给框选）
-		if (ev.button === 1 || ev.altKey) {
+		if (ev.button === 2 || ev.button === 1 || ev.altKey) {
+			try { ev.preventDefault(); } catch (e) { /* ignore */ }
 			panning = { x: sx, y: sy, cx: camera.x, cy: camera.y };
 			return;
 		}
