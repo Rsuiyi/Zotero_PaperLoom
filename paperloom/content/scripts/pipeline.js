@@ -125,6 +125,34 @@ PaperLoom.Pipeline = (function () {
 		];
 	}
 
+	// -------------------------------------------------------------- 摘要兜底
+
+	/** "讲讲这篇论文大概内容"这类问题：没有关键词，必须用开头的摘要/引言 */
+	function isSummaryQuery(q) {
+		return /(总结|概括|概述|大概内容|讲了什么|讲什么|主要讲|简单介绍|简单说明|简介|摘要|全文|主要内容|这篇论文|这篇文章|summar|overview|abstract|what.*paper.*about)/i
+			.test(String(q || ""));
+	}
+
+	/** 取论文开头作为证据：引言段优先，再按原文顺序补齐到 n 块 */
+	function leadingChunks(chunks, n) {
+		const limit = n || 6;
+		const out = [];
+		const seen = new Set();
+
+		const push = (c) => {
+			if (!c || seen.has(c.chunkId) || out.length >= limit) return;
+			seen.add(c.chunkId);
+			out.push(c);
+		};
+
+		for (const c of chunks) {
+			if (c.section === "intro") push(c);
+		}
+		for (const c of chunks) push(c);
+
+		return out;
+	}
+
 	// -------------------------------------------------------------- 主入口
 
 	/**
@@ -183,7 +211,7 @@ PaperLoom.Pipeline = (function () {
 		const lib = await libraryChunks(opts.item ? opts.item.key : null);
 		Object.assign(titles, lib.titles);
 
-		const [currentHits, libraryHitsRaw, graphSeeds, memoryFactsRaw] = await Promise.all([
+		const [currentHitsRaw, libraryHitsRaw, graphSeeds, memoryFactsRaw] = await Promise.all([
 			Promise.resolve(focusChunks.length
 				? PaperLoom.Retriever.search(PaperLoom.Retriever.buildIndex(focusChunks), query, {
 					topK: crossPaper ? 4 : 6,
@@ -199,6 +227,28 @@ PaperLoom.Pipeline = (function () {
 			PaperLoom.GraphStore.findConceptsByQuery(query),
 			PaperLoom.Memory.retrieve(query, { paperId: opts.item ? opts.item.key : null })
 		]);
+
+		// ★ 语言不一致兜底：
+		// 中文提问 + 英文正文时 BM25 往往 0 命中；总结类问题（"讲了什么"）本身也没有关键词。
+		// 这类情况直接用论文开头的摘要/引言当证据，而不是让模型说"没拿到材料"。
+		let currentHits = currentHitsRaw;
+		if (focusChunks.length) {
+			const wantSummary = isSummaryQuery(query);
+			if (!currentHits.length || wantSummary) {
+				const lead = leadingChunks(focusChunks, wantSummary ? 8 : 6);
+				const seen = new Set(currentHits.map(h => h.chunk.chunkId));
+				const extras = lead
+					.filter(c => !seen.has(c.chunkId))
+					.map(c => ({ chunk: c, score: 0 }));
+
+				if (extras.length) {
+					currentHits = currentHits.concat(extras);
+					if (!wantSummary) {
+						warnings.push("检索与正文语言可能不一致（0 命中），已改用论文开头的摘要/引言作为证据。");
+					}
+				}
+			}
+		}
 
 		let libraryHits = libraryHitsRaw;
 
