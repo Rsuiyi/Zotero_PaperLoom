@@ -653,7 +653,7 @@ function openSettings(win) {
 	const left = Math.max(0, Math.round((sw - width) / 2));
 	const top = Math.max(0, Math.round((sh - height) / 2));
 
-	const features = "chrome,dialog=no,resizable"
+	const features = "chrome,dialog=no,resizable,centerscreen"
 		+ ",width=" + width + ",height=" + height
 		+ ",left=" + left + ",top=" + top;
 
@@ -680,7 +680,8 @@ function openSettings(win) {
 	}
 
 	if (w) {
-		centerDialog(win, w, { width: 700, height: 700 });
+		// 位置已由 features 的 left/top + centerscreen 决定。
+		// 这里绝对不能再 resizeTo/moveTo：每次 resize 都会被 Windows 重新吸附到上沿。
 		return;
 	}
 

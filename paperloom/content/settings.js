@@ -288,7 +288,7 @@
 		}
 
 		if (w) {
-			centerWindow(w, { width: 680, height: 700 });
+			// 位置由 features 决定，打开后不再移动窗口
 			return;
 		}
 
