@@ -32,10 +32,16 @@ const IOUtils = {
 
 const PathUtils = { join: (...a) => path.join(...a) };
 
+// 迷你偏好存储：服务商注册表测试需要读写
+const prefStore = new Map();
+
 const Zotero = {
 	debug() { },
 	DataDirectory: { dir: path.join("/tmp", "zotero-test") },
-	Prefs: { get: () => undefined }
+	Prefs: {
+		get(key) { return prefStore.has(key) ? prefStore.get(key) : undefined; },
+		set(key, value) { prefStore.set(key, value); }
+	}
 };
 
 const sandbox = { IOUtils, PathUtils, Zotero, console, fetch: async () => { throw new Error("no network"); },
@@ -43,7 +49,8 @@ const sandbox = { IOUtils, PathUtils, Zotero, console, fetch: async () => { thro
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
-for (const f of ["schema.js", "storage.js", "llm.js", "chunker.js", "retriever.js",
+// 与 bootstrap.js 的加载顺序保持一致：compat.js 必须最先
+for (const f of ["compat.js", "schema.js", "storage.js", "llm.js", "chunker.js", "retriever.js",
 	"memory.js", "graphStore.js", "pipeline.js", "stubs.js"]) {
 	vm.runInContext(fs.readFileSync(path.join(ROOT, f), "utf8"), sandbox, { filename: f });
 }
@@ -265,17 +272,30 @@ function section(t) { console.log("\n" + t); }
 
 	section("8. LLM 层");
 	{
-		check("未配置 Key 时 isConfigured=false", PL.LLM.isConfigured() === false);
+		check("未配置服务商时 isConfigured=false", PL.LLM.isConfigured() === false);
 		check("max_tokens 下限被钳制到 4096", PL.LLM.config().maxTokens >= 4096,
 			String(PL.LLM.config().maxTokens));
 		check("容错解析 ```json 包裹", PL.LLM.parseJSON('```json\n{"a":1}\n```').a === 1);
 		check("容错解析前后带废话", PL.LLM.parseJSON('好的：{"a":2} 以上').a === 2);
+
+		// 没有选模型时应该明确报 NO_MODEL，而不是发一个空请求
 		try {
 			await PL.LLM.complete({ messages: [] });
-			check("无 Key 时抛 NO_API_KEY", false);
+			check("未选模型时抛 NO_MODEL", false);
 		}
 		catch (e) {
-			check("无 Key 时抛 NO_API_KEY", e.code === "NO_API_KEY", e.message);
+			check("未选模型时抛 NO_MODEL", e.code === "NO_MODEL", e.message);
+		}
+
+		// 选了模型但服务商没填 Key → NO_API_KEY
+		PL.LLM.saveProviders([{ id: "p_test", name: "测试站", baseURL: "https://example.com/v1", apiKey: "", models: ["m1"] }]);
+		Zotero.Prefs.set("extensions.paperloom.chatModelRef", "p_test|m1");
+		try {
+			await PL.LLM.complete({ messages: [] });
+			check("服务商无 Key 时抛 NO_API_KEY", false);
+		}
+		catch (e) {
+			check("服务商无 Key 时抛 NO_API_KEY", e.code === "NO_API_KEY", e.message);
 		}
 	}
 
@@ -383,6 +403,191 @@ function section(t) { console.log("\n" + t); }
 
 		const ignored = await PL.Memory.recordBehavior({ type: "unknown.signal" });
 		check("未知行为信号被忽略", ignored.action === "ignored");
+	}
+
+	section("11. compat 能力探测（7/8/9/10 差异收口点）");
+	{
+		const c = PL.Compat.caps();
+		check("能取到数据目录（DataDirectory.dir）", c.dataDir === true, JSON.stringify(c));
+		check("缺失的 API 被如实报告为 false",
+			c.itemPaneSections === false && c.preferencePanes === false, JSON.stringify(c));
+		check("dataDir() 解析出目录", typeof PL.Compat.dataDir() === "string" && PL.Compat.dataDir().length > 0,
+			PL.Compat.dataDir());
+
+		// sectionOptions 必须自动补齐 header/sidenav 的 icon（7.1+/10 的必填项）
+		const opts = PL.Compat.sectionOptions({
+			paneID: "x",
+			header: { l10nID: "h" },
+			sidenav: { l10nID: "s" }
+		}, "chrome://paperloom/content/icons/paperloom.svg");
+		check("★ sectionOptions 自动补 header.icon", !!opts.header.icon, JSON.stringify(opts.header));
+		check("★ sectionOptions 自动补 sidenav.icon", !!opts.sidenav.icon, JSON.stringify(opts.sidenav));
+		check("sectionOptions 不丢原有字段", opts.header.l10nID === "h" && opts.paneID === "x");
+
+		check("describe() 输出缺失能力清单", typeof PL.Compat.describe() === "string",
+			PL.Compat.describe());
+	}
+
+	section("12. 服务商注册表（模型只来自接口，不编造）");
+	{
+		const providers = PL.LLM.getProviders();
+		check("能读回已保存的服务商", providers.length === 1 && providers[0].id === "p_test",
+			JSON.stringify(providers));
+
+		const ref = PL.LLM.makeRef("p_test", "m1");
+		check("makeRef/parseRef 往返一致", PL.LLM.parseRef(ref).providerId === "p_test"
+			&& PL.LLM.parseRef(ref).model === "m1", ref);
+
+		const target = PL.LLM.resolveRef(ref);
+		check("★ 引用能解析出服务商的 baseURL 与模型",
+			!!target && target.baseURL === "https://example.com/v1" && target.model === "m1",
+			JSON.stringify(target));
+
+		check("未知服务商的引用解析为 null", PL.LLM.resolveRef("nope|m1") === null);
+		check("没有内置模型目录（不再凭空出现模型）",
+			typeof PL.LLM.modelSuggestions === "undefined");
+
+		// 响应解析：OpenAI / 纯数组 / result 包装 / Gemini 的 models/ 前缀
+		check("解析 data 数组", PL.LLM.extractModelIds({ data: [{ id: "a" }, { id: "b" }] }).join(",") === "a,b");
+		check("解析纯数组", PL.LLM.extractModelIds(["c", "d"]).join(",") === "c,d");
+		check("解析 result.data", PL.LLM.extractModelIds({ result: { data: [{ id: "e" }] } }).join(",") === "e");
+		check("去掉 models/ 前缀", PL.LLM.extractModelIds({ data: [{ id: "models/f" }] }).join(",") === "f");
+
+		// 端点候选：带 /v1 的 base 要额外尝试去掉 /v1 的写法
+		const urls = PL.LLM.modelURLs("https://api.example.com/v1");
+		check("★ 模型端点同时尝试带/不带 /v1",
+			urls.includes("https://api.example.com/v1/models")
+			&& urls.includes("https://api.example.com/models"), JSON.stringify(urls));
+	}
+
+	section("13. 图谱手动编辑");
+	{
+		await PL.GraphStore.upsertNode({ type: "concept", label: "测试概念" });
+		let g = await PL.GraphStore.load();
+		const node = g.nodes.find(n => n.label === "测试概念");
+		check("新增概念成功", !!node, JSON.stringify(g.nodes));
+
+		const renamed = await PL.GraphStore.renameNode(node.nodeId, "改名后概念");
+		g = await PL.GraphStore.load();
+		check("★ 重命名同步更新 nodeId", !!renamed && g.nodes.some(n => n.label === "改名后概念"),
+			JSON.stringify(g.nodes));
+
+		await PL.GraphStore.removeNode(renamed.nodeId);
+		g = await PL.GraphStore.load();
+		check("删除节点生效", !g.nodes.some(n => n.label === "改名后概念"));
+
+		// 批量删除（框选后用）
+		await PL.GraphStore.upsertNode({ type: "concept", label: "批量甲" });
+		await PL.GraphStore.upsertNode({ type: "concept", label: "批量乙" });
+		g = await PL.GraphStore.load();
+		const batch = g.nodes.filter(n => /^批量[甲乙]$/.test(n.label)).map(n => n.nodeId);
+		await PL.GraphStore.removeNodes(batch);
+		g = await PL.GraphStore.load();
+		check("★ 批量删除节点生效", !g.nodes.some(n => /^批量[甲乙]$/.test(n.label)));
+	}
+
+	section("14. 用量统计与系统提示词");
+	{
+		const u1 = PL.LLM.extractUsage({
+			usage: {
+				prompt_tokens: 1000, completion_tokens: 120, total_tokens: 1120,
+				prompt_cache_hit_tokens: 800, prompt_cache_miss_tokens: 200
+			}
+		});
+		check("★ 解析 DeepSeek 缓存命中字段",
+			u1 && u1.input === 1000 && u1.output === 120 && u1.cached === 800,
+			JSON.stringify(u1));
+
+		const u2 = PL.LLM.extractUsage({
+			usage: { input_tokens: 500, output_tokens: 60, input_tokens_details: { cached_tokens: 400 } }
+		});
+		check("解析 Anthropic 风格 usage",
+			u2 && u2.input === 500 && u2.output === 60 && u2.cached === 400,
+			JSON.stringify(u2));
+
+		check("无 usage 时返回 null", PL.LLM.extractUsage({}) === null);
+
+		// 自定义系统提示词必须出现在 system 消息里
+		Zotero.Prefs.set("extensions.paperloom.systemPrompt", "回答用中文，先给结论");
+		const msgs = PL.Pipeline.buildMessages({
+			query: "这篇讲了什么", intent: "single_fact", memoryFacts: [],
+			titles: {}, currentHits: [], libraryHits: [], graphContext: {}, existingNodes: []
+		});
+		check("★ 自定义系统提示词注入 system 消息",
+			msgs[0].role === "system" && msgs[0].content.includes("回答用中文，先给结论"),
+			msgs[0].content.slice(-80));
+		Zotero.Prefs.set("extensions.paperloom.systemPrompt", "");
+	}
+
+	section("15. 推理强度参数与请求体");
+	{
+		PL.LLM.saveProviders([{ id: "p_eff", name: "测试", baseURL: "https://example.com/v1", apiKey: "sk-x", models: ["m"] }]);
+		Zotero.Prefs.set("extensions.paperloom.chatModelRef", "p_eff|m");
+		Zotero.Prefs.set("extensions.paperloom.useCache", false);
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "high");
+
+		let captured = null;
+		sandbox.fetch = async (url, init) => {
+			captured = JSON.parse(init.body);
+			return {
+				ok: true,
+				status: 200,
+				text: async () => JSON.stringify({
+					choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+				})
+			};
+		};
+
+		const content = await PL.LLM.complete({ messages: [{ role: "user", content: "hi" }] });
+		check("请求体带上 reasoning_effort", captured && captured.reasoning_effort === "high",
+			JSON.stringify(captured));
+		check("请求成功后记录 usage", PL.LLM.lastUsage() && PL.LLM.lastUsage().input === 10,
+			JSON.stringify(PL.LLM.lastUsage()));
+		check("正常返回 content", content === "ok");
+
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "");
+
+		// DeepSeek 推理模型必须同时带 thinking，否则 effort 不生效
+		const deep = PL.LLM.reasoningParam("high", "deepseek-v4-pro");
+		check("★ DeepSeek 同时发送 thinking",
+			deep.thinking && deep.thinking.type === "enabled" && deep.reasoning_effort === "high",
+			JSON.stringify(deep));
+
+		const other = PL.LLM.reasoningParam("high", "gpt-5.5");
+		check("非 DeepSeek 只发 reasoning_effort",
+			other.reasoning_effort === "high" && !other.thinking, JSON.stringify(other));
+
+		check("自动时不发送任何 reasoning 参数",
+			Object.keys(PL.LLM.reasoningParam("", "deepseek-v4-pro")).length === 0);
+
+		// 服务商拒绝该参数（400）时要自动去掉并重试，不能把对话搞挂
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "high");
+		const calls = [];
+		sandbox.fetch = async (url, init) => {
+			const body = JSON.parse(init.body);
+			calls.push(body);
+			if (calls.length === 1) {
+				return { ok: false, status: 400, text: async () => "reasoning_effort unsupported" };
+			}
+			return {
+				ok: true,
+				status: 200,
+				text: async () => JSON.stringify({
+					choices: [{ message: { content: "ok" } }],
+					usage: { prompt_tokens: 1, completion_tokens: 1 }
+				})
+			};
+		};
+
+		const retried = await PL.LLM.complete({ messages: [{ role: "user", content: "hi" }] });
+		check("★ 400 时自动去掉 reasoning 参数重试",
+			calls.length === 2 && !("reasoning_effort" in calls[1]) && retried === "ok",
+			JSON.stringify(calls.map(c => Object.keys(c))));
+		check("降级会给出提示", typeof PL.LLM.lastWarning() === "string" && PL.LLM.lastWarning().length > 0,
+			PL.LLM.lastWarning());
+
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "");
 	}
 
 	console.log("\n" + "=".repeat(50));

@@ -8,10 +8,39 @@
 (function () {
 	"use strict";
 
-	const Zotero = window.Zotero
-		|| (window.top && window.top.Zotero)
-		|| (window.parent && window.parent.Zotero);
-	const PL = Zotero && Zotero.PaperLoom;
+	// 同 chat.js：标签页可能在插件启动前被恢复，领域层允许稍后才就绪
+	let Zotero = resolveZotero();
+	let PL = (window.arguments && window.arguments[0] && window.arguments[0].PaperLoom)
+		|| (Zotero && Zotero.PaperLoom);
+
+	function resolveZotero() {
+		const tries = [
+			() => (window.arguments && window.arguments[0] && window.arguments[0].Zotero),
+			() => window.Zotero,
+			() => (window.top && window.top.Zotero),
+			() => (window.parent && window.parent.Zotero),
+			() => (window.opener && window.opener.Zotero)
+		];
+		for (const get of tries) {
+			try {
+				const z = get();
+				if (z) return z;
+			}
+			catch (e) { /* 跨域时继续试下一条 */ }
+		}
+		return null;
+	}
+
+	async function waitForDomainLayer(maxMs) {
+		const deadline = Date.now() + (maxMs || 20000);
+		while (Date.now() < deadline) {
+			Zotero = resolveZotero();
+			PL = Zotero && Zotero.PaperLoom;
+			if (PL) return true;
+			await new Promise(r => setTimeout(r, 200));
+		}
+		return false;
+	}
 
 	const $ = (id) => document.getElementById(id);
 
@@ -19,14 +48,37 @@
 	if (document.readyState !== "loading") init();
 
 	let inited = false;
-	function init() {
+	// 原生 confirm/prompt 在 chrome iframe 里可能不可用：全部走带兜底的封装
+	function confirmAction(text) {
+		try { return window.confirm(text); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().confirm(text); } catch (e) { /* ignore */ }
+		return true;
+	}
+
+	function promptAction(text, def) {
+		try { return window.prompt(text, def); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().prompt(text, def); } catch (e) { /* ignore */ }
+		return null;
+	}
+
+	function alertAction(text) {
+		try { window.alert(text); return; } catch (e) { /* ignore */ }
+		try { Zotero.getMainWindow().alert(text); } catch (e) { /* ignore */ }
+	}
+
+	async function init() {
 		if (inited) return;
 		inited = true;
 
 		if (!PL) {
 			$("pl-mem-empty").style.display = "block";
-			$("pl-mem-empty").textContent = "PaperLoom 领域层未加载，请重启 Zotero。";
-			return;
+			$("pl-mem-empty").textContent = "PaperLoom 正在加载…";
+			const ready = await waitForDomainLayer(20000);
+			if (!ready) {
+				$("pl-mem-empty").textContent = "PaperLoom 领域层尚未就绪，请关闭本页后重新打开。";
+				return;
+			}
+			$("pl-mem-empty").textContent = "";
 		}
 
 		$("pl-mem-refresh").addEventListener("click", render);
@@ -42,7 +94,7 @@
 		const key = $("pl-mem-key").value.trim();
 		const value = $("pl-mem-value").value.trim();
 		if (!key || !value) {
-			window.alert("key 和 value 都不能为空。");
+			alertAction("key 和 value 都不能为空。");
 			return;
 		}
 		await PL.Memory.setExplicit(key, value, "用户在记忆面板中手动添加");
@@ -193,7 +245,7 @@
 		editBtn.textContent = "改正";
 		editBtn.title = "修改后会锁定为 explicit / confidence 1.00";
 		editBtn.addEventListener("click", async () => {
-			const next = window.prompt("修改「" + fact.key + "」的值（修改后将锁定，不再被推断覆盖）：", String(fact.value));
+			const next = promptAction("修改「" + fact.key + "」的值（修改后将锁定，不再被推断覆盖）：", String(fact.value));
 			if (next === null || !next.trim()) return;
 			await PL.Memory.setExplicit(fact.key, next.trim(), "用户在记忆面板中改正");
 			render();
@@ -214,7 +266,7 @@
 		const delBtn = document.createElement("button");
 		delBtn.textContent = "删除";
 		delBtn.addEventListener("click", async () => {
-			if (!window.confirm("删除记忆「" + fact.key + " = " + fact.value + "」？")) return;
+			if (!confirmAction("删除记忆「" + fact.key + " = " + fact.value + "」？")) return;
 			await PL.Memory.remove(fact.factId);
 			render();
 		});

@@ -95,6 +95,22 @@ PaperLoom.Chunker = (function () {
 		return chunks;
 	}
 
+	/**
+	 * 把全文按 \f 分页符切成 pages。
+	 * 空页跳过但保留真实页号（page = 下标 + 1），保证引用跳转不会整体错位。
+	 */
+	function fillPagesFromText(result, text) {
+		const parts = String(text == null ? "" : text).split("\f");
+		if (parts.length > 1) {
+			for (let i = 0; i < parts.length; i++) {
+				if (parts[i] && parts[i].trim()) result.pages.push({ page: i + 1, text: parts[i] });
+			}
+		}
+		else if (text && String(text).trim()) {
+			result.pages.push({ page: 1, text: text });
+		}
+	}
+
 	function normalizeText(text) {
 		return String(text == null ? "" : text)
 			.replace(/\u0000/g, "")
@@ -110,13 +126,38 @@ PaperLoom.Chunker = (function () {
 	 * 退回路径没有真实页码时统一记为第 1 页，并在 UI 上提示引用无法精确定位。
 	 */
 	async function extractPages(item) {
-		const result = { pages: [], attachmentId: null, source: "none" };
+		const result = { pages: [], attachmentId: null, source: "none", errors: [] };
 
+		// 附件解析：正常是"条目 → 最佳附件"；如果拿到的本身就是附件（用户在列表里选了 PDF），直接用
 		let attachment = null;
 		try {
-			attachment = await item.getBestAttachment();
+			if (item.isRegularItem && item.isRegularItem()) {
+				attachment = await item.getBestAttachment();
+			}
+			else if (item.isAttachment && item.isAttachment()) {
+				attachment = item;
+			}
 		}
-		catch (e) { /* 无附件 */ }
+		catch (e) {
+			result.errors.push("getBestAttachment: " + e);
+		}
+
+		// 兜底：getBestAttachment 失败时，自己在子条目里找 PDF
+		if (!attachment && item.getAttachments) {
+			try {
+				const ids = item.getAttachments() || [];
+				for (const id of ids) {
+					const att = Zotero.Items.get(id);
+					if (att && att.attachmentContentType === "application/pdf") {
+						attachment = att;
+						break;
+					}
+				}
+			}
+			catch (e) {
+				result.errors.push("getAttachments: " + e);
+			}
+		}
 
 		if (attachment) {
 			result.attachmentId = attachment.id;
@@ -139,30 +180,62 @@ PaperLoom.Chunker = (function () {
 					}
 				}
 			}
-			catch (e) { /* 继续尝试下一条路径 */ }
+			catch (e) { result.errors.push("cache: " + e); }
 
-			// 路径 2：全文索引里的纯文本，没有页分隔，页码只能记 1
+			// 路径 2：直接让 PDFWorker 抽文本。
+			// 这是 7–10 都存在的接口；10 虽然删了 Fulltext.getIndexedText()，但这条不受影响。
+			// 返回的 text 同样带 \f 分页符，能保留真实页码。
 			try {
-				const text = await Zotero.Fulltext.getIndexedText(attachment.id);
-				if (text && text.trim()) {
-					const byForm = text.split("\f");
-					if (byForm.length > 1) {
-						for (let i = 0; i < byForm.length; i++) {
-							if (byForm[i].trim()) result.pages.push({ page: i + 1, text: byForm[i] });
+				if (Zotero.PDFWorker && Zotero.PDFWorker.getFullText) {
+					const full = await Zotero.PDFWorker.getFullText(attachment.id);
+					const text = full && full.text;
+					if (text && text.trim()) {
+						fillPagesFromText(result, text);
+						if (result.pages.length) {
+							result.source = "pdfworker";
+							return result;
 						}
-						result.source = "fulltext-indexed-paged";
 					}
-					else {
-						result.pages.push({ page: 1, text: text });
-						result.source = "fulltext-indexed-flat";
-					}
-					return result;
 				}
 			}
-			catch (e) { /* 继续 */ }
+			catch (e) { result.errors.push("pdfworker: " + e); }
+
+			// 路径 3：Zotero 7–9 的旧接口（10 已移除，所以用能力探测而不是版本号判断）
+			try {
+				const caps = PaperLoom.Compat.caps();
+				if (caps.fulltextIndexedText) {
+					const text = await Zotero.Fulltext.getIndexedText(attachment.id);
+					if (text && String(text).trim()) {
+						fillPagesFromText(result, text);
+						if (result.pages.length) {
+							result.source = "fulltext-indexed-text";
+							return result;
+						}
+					}
+				}
+			}
+			catch (e) { result.errors.push("indexedText: " + e); }
+
+			// 路径 4：强制建一次全文索引，再读缓存文件。
+			// 有些环境（PDF 转换器缺失、EPUB 等）前两条都拿不到文本，索引是最后一条兜底。
+			try {
+				const caps = PaperLoom.Compat.caps();
+				if (caps.fulltextIndexItems && caps.fulltextCache) {
+					await Zotero.Fulltext.indexItems([attachment.id], { complete: true, ignoreErrors: true });
+					const cachePath = Zotero.Fulltext.getItemCacheFile(attachment).path;
+					if (cachePath && await IOUtils.exists(cachePath)) {
+						fillPagesFromText(result, await IOUtils.readUTF8(cachePath));
+						if (result.pages.length) {
+							result.source = "fulltext-indexed";
+							return result;
+						}
+					}
+				}
+			}
+			catch (e) { result.errors.push("indexItems: " + e); }
 		}
 
-		// 路径 3：没有附件全文，退回元数据摘要，至少让对话有上下文
+		// 路径 5：没有附件全文，退回元数据摘要，至少让对话有上下文
 		const abs = item.getField ? (item.getField("abstractNote") || "") : "";
 		if (abs.trim()) {
 			result.pages.push({ page: 1, text: abs });
@@ -174,7 +247,18 @@ PaperLoom.Chunker = (function () {
 	/** 解析一篇论文为 PaperDoc；已解析且未过期则直接读缓存 */
 	async function buildPaperDoc(item, opts) {
 		opts = opts || {};
-		const paperId = item.key;
+
+		// 统一到"常规条目"：如果传进来的是 PDF 附件，用它的父条目做 paperId，
+		// 否则 doc.paperId 会和调用方传入的 item.key 对不上，导致检索时找不到当前论文。
+		let paperItem = item;
+		try {
+			if (item && item.isAttachment && item.isAttachment() && item.parentItemID) {
+				paperItem = Zotero.Items.get(item.parentItemID) || item;
+			}
+		}
+		catch (e) { /* 保持原样 */ }
+
+		const paperId = paperItem.key;
 
 		if (!opts.force) {
 			const cached = await PaperLoom.Storage.readPaperDoc(paperId);
@@ -183,20 +267,21 @@ PaperLoom.Chunker = (function () {
 			}
 		}
 
-		const extracted = await extractPages(item);
+		const extracted = await extractPages(paperItem);
 		const chunks = chunkPages(paperId, extracted.pages);
 
-		const creators = item.getCreators ? item.getCreators() : [];
+		const creators = paperItem.getCreators ? paperItem.getCreators() : [];
 		const doc = S.makePaperDoc({
 			paperId: paperId,
-			title: item.getField ? item.getField("title") : "",
+			title: paperItem.getField ? paperItem.getField("title") : "",
 			authors: creators.map(c => [c.firstName, c.lastName].filter(Boolean).join(" ")),
-			year: item.getField ? (String(item.getField("date") || "").match(/\d{4}/) || [""])[0] : "",
-			venue: item.getField ? (item.getField("publicationTitle") || item.getField("proceedingsTitle") || "") : "",
+			year: paperItem.getField ? (String(paperItem.getField("date") || "").match(/\d{4}/) || [""])[0] : "",
+			venue: paperItem.getField ? (paperItem.getField("publicationTitle") || paperItem.getField("proceedingsTitle") || "") : "",
 			attachmentId: extracted.attachmentId,
 			chunks: chunks
 		});
 		doc.textSource = extracted.source;
+		doc.extractionErrors = extracted.errors || [];
 
 		await PaperLoom.Storage.writePaperDoc(doc);
 		return doc;

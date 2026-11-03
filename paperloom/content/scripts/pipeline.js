@@ -57,6 +57,20 @@ PaperLoom.Pipeline = (function () {
 		return "## " + title + "\n" + lines.join("\n\n");
 	}
 
+	/**
+	 * 本轮实际提供给模型的证据 → UI 的「来源」卡片。
+	 * 即使模型没在正文里写 [PID, p.x]，用户也能看到回答了哪些原文。
+	 */
+	function buildSources(hits, titles) {
+		return (hits || []).slice(0, 8).map((h) => ({
+			paperId: h.chunk.paperId,
+			page: h.chunk.page,
+			chunkId: h.chunk.chunkId,
+			title: (titles && titles[h.chunk.paperId]) || h.chunk.paperId,
+			quote: String(h.chunk.text || "").slice(0, 220)
+		}));
+	}
+
 	function renderGraphContext(graphCtx) {
 		if (!graphCtx || !graphCtx.edges || !graphCtx.edges.length) return "";
 		const nodeLabel = Object.create(null);
@@ -89,6 +103,8 @@ PaperLoom.Pipeline = (function () {
 6. graph_delta 的节点【优先复用】下面「已有概念节点」里的 nodeId（在 nodes 里填 nodeId 字段，edges 里用 source/target 填 nodeId）；只有确实是新概念才用 label 新建。概念总数不要超过 15 个。
 7. memory_delta 只记录关于【用户本人】的稳定偏好或状态，不记录论文内容。
 8. 遵守 <memory> 区块里的用户偏好（例如回答长度、是否用公式）。
+9. 「论文证据 · 当前论文」通常是该论文的完整原文（超出预算时为均匀摘录），不是关键词检索片段；总结、概述、介绍类问题直接依据它作答，不要声称"没有拿到正文"。
+10. 回答按调查报告的格式组织：开头一句结论，然后用「## 小节标题」分段（例如 核心贡献 / 方法 / 实验结论 / 局限），每段 2–4 句。引用标记 [PID:xxx, p.3] 放在句子末尾，不要堆在段落开头。
 
 只输出一个 JSON 对象：
 {
@@ -103,6 +119,16 @@ PaperLoom.Pipeline = (function () {
   "memory_delta": {"facts":[{"key":"style.length","value":"short","confidence":0.6,"reason":"用户说讲简单点"}]}
 }
 没有可写的增量时给空数组/空对象。`;
+
+	/** 用户在设置里写的附加系统提示词 */
+	function extraSystemPrompt() {
+		try {
+			return String(Zotero.Prefs.get("extensions.paperloom.systemPrompt", true) || "").trim();
+		}
+		catch (e) {
+			return "";
+		}
+	}
 
 	function buildMessages(ctx) {
 		const memoryBlock = PaperLoom.Memory.renderBlock(ctx.memoryFacts);
@@ -119,10 +145,58 @@ PaperLoom.Pipeline = (function () {
 			renderExistingNodes(ctx.existingNodes)
 		].filter(Boolean);
 
+		// 自定义提示词放在 system 末尾：既生效，又不破坏前面稳定的规则前缀（利于缓存命中）
+		const extra = extraSystemPrompt();
+		const system = extra
+			? ANSWER_CONTRACT + "\n\n## 用户自定义系统提示词（可覆盖回答风格，但不得违反上面的证据与引用规则）\n" + extra
+			: ANSWER_CONTRACT;
+
 		return [
-			{ role: "system", content: ANSWER_CONTRACT },
+			{ role: "system", content: system },
 			{ role: "user", content: sections.join("\n\n") + "\n\n## 用户问题\n" + ctx.query }
 		];
+	}
+
+	// -------------------------------------------------------------- 当前论文直读
+
+	/**
+	 * 当前论文不做关键词检索，直接把原文铺进 prompt。
+	 * 这是"选中论文 = 基于全文问答"的关键：BM25 只用于跨论文找证据，
+	 * 单篇问答如果先检索，中文问题问英文正文会直接 0 命中。
+	 *
+	 * 预算内全给；超预算时按块数均匀采样，保证首尾都在，覆盖全文而非只取开头。
+	 */
+	function directChunks(chunks, budgetChars) {
+		if (!chunks || !chunks.length) return [];
+
+		const total = chunks.reduce((sum, c) => sum + String(c.text || "").length, 0);
+		if (!budgetChars || total <= budgetChars) return chunks.slice();
+
+		const avg = total / chunks.length;
+		const maxCount = Math.max(1, Math.floor(budgetChars / Math.max(1, avg)));
+		if (maxCount >= chunks.length) return chunks.slice();
+
+		const stride = chunks.length / maxCount;
+		const picked = [];
+		for (let i = 0; i < chunks.length; i += stride) {
+			picked.push(chunks[Math.floor(i)]);
+		}
+		if (picked[0] !== chunks[0]) picked.unshift(chunks[0]);
+		if (picked[picked.length - 1] !== chunks[chunks.length - 1]) picked.push(chunks[chunks.length - 1]);
+		return picked;
+	}
+
+	/** 按 chunkId 去重，保留先出现的（直读块优先，检索命中只补空缺） */
+	function dedupeHits(hits) {
+		const seen = new Set();
+		const out = [];
+		for (const h of hits) {
+			const id = h && h.chunk && h.chunk.chunkId;
+			if (!id || seen.has(id)) continue;
+			seen.add(id);
+			out.push(h);
+		}
+		return out;
 	}
 
 	// -------------------------------------------------------------- 主入口
@@ -158,7 +232,10 @@ PaperLoom.Pipeline = (function () {
 
 		const currentDoc = opts.item ? focusDocs.find(d => d.paperId === opts.item.key) : null;
 		if (opts.item && currentDoc && !(currentDoc.chunks || []).length) {
-			warnings.push("当前论文没有可用全文（可能缺附件或未建索引），回答只能依赖库内其他论文与元数据。");
+			const errs = (currentDoc.extractionErrors || []).join("；");
+			warnings.push("当前论文没有可用全文（缺附件或未建索引）"
+				+ (errs ? "，提取过程报错：" + errs : "")
+				+ "。回答只能依赖库内其他论文与元数据。");
 		}
 		if (currentDoc && currentDoc.textSource && currentDoc.textSource !== "pdftotext-cache") {
 			warnings.push("当前论文的页码来源是「" + currentDoc.textSource + "」，引用页码可能不精确。");
@@ -180,7 +257,7 @@ PaperLoom.Pipeline = (function () {
 		const lib = await libraryChunks(opts.item ? opts.item.key : null);
 		Object.assign(titles, lib.titles);
 
-		const [currentHits, libraryHitsRaw, graphSeeds, memoryFactsRaw] = await Promise.all([
+		const [currentHitsRaw, libraryHitsRaw, graphSeeds, memoryFactsRaw] = await Promise.all([
 			Promise.resolve(focusChunks.length
 				? PaperLoom.Retriever.search(PaperLoom.Retriever.buildIndex(focusChunks), query, {
 					topK: crossPaper ? 4 : 6,
@@ -196,6 +273,23 @@ PaperLoom.Pipeline = (function () {
 			PaperLoom.GraphStore.findConceptsByQuery(query),
 			PaperLoom.Memory.retrieve(query, { paperId: opts.item ? opts.item.key : null })
 		]);
+
+		// ★ 当前论文直读：选中论文时不做关键词检索，直接把原文铺进 prompt。
+		// 检索只用于跨论文补充；单篇问答如果先过 BM25，中文问题问英文正文会 0 命中。
+		let currentHits = currentHitsRaw;
+		const docsWithText = focusDocs.filter(d => (d.chunks || []).length);
+		if (docsWithText.length) {
+			// 约 4 万字符 ≈ 1.2 万 token，普通论文可整篇放入；多篇时平摊
+			const perDocBudget = Math.floor(40000 / docsWithText.length);
+			const direct = [];
+			for (const d of docsWithText) {
+				for (const c of directChunks(d.chunks, perDocBudget)) {
+					direct.push({ chunk: c, score: 0 });
+				}
+			}
+			// 直读块在前，检索命中只补空缺
+			currentHits = dedupeHits(direct.concat(currentHitsRaw));
+		}
 
 		let libraryHits = libraryHitsRaw;
 
@@ -259,7 +353,7 @@ PaperLoom.Pipeline = (function () {
 			const turn = await recordTurn({
 				paperId: opts.item ? opts.item.key : null,
 				query: query,
-				answer: "**未配置 LLM API Key**，以下是本地 BM25 检索到的证据，可直接点击引用跳转原文。",
+				answer: "**尚未选择模型**，以下是本地 BM25 检索到的证据，可直接点击引用跳转原文。请到 设置 → PaperLoom 添加服务商并选择模型。",
 				citations: currentHits.concat(libraryHits).map(h => ({
 					paperId: h.chunk.paperId, page: h.chunk.page,
 					chunkId: h.chunk.chunkId, quote: h.chunk.text.slice(0, 160)
@@ -271,12 +365,16 @@ PaperLoom.Pipeline = (function () {
 			return {
 				turn, intent, warnings, titles,
 				answer: turn.answer, citations: turn.citations,
+				sources: buildSources(currentHits, titles),
 				memoryUsed: memoryFacts, diff: null, degraded: true
 			};
 		}
 
 		progress("thinking", "模型生成中…");
 		const parsed = await PaperLoom.LLM.completeJSON({ messages: buildMessages(ctx) });
+		const usage = PaperLoom.LLM.lastUsage ? PaperLoom.LLM.lastUsage() : null;
+		const llmWarning = PaperLoom.LLM.lastWarning ? PaperLoom.LLM.lastWarning() : null;
+		if (llmWarning) warnings.push(llmWarning);
 
 		// ---- 5 引用校验（定位失败的引用标红，不静默通过）
 		const evidenceIndex = Object.create(null);
@@ -319,7 +417,8 @@ PaperLoom.Pipeline = (function () {
 			answer: parsed.answer || "",
 			citations: citations,
 			memoryUsed: memoryFacts.map(f => f.factId),
-			graphTouched: []
+			graphTouched: [],
+			usage: usage
 		});
 
 		const delta = normalizeGraphDelta(parsed.graph_delta, { focusDocs, titles });
@@ -376,9 +475,11 @@ PaperLoom.Pipeline = (function () {
 			turn, intent, warnings, titles,
 			answer: parsed.answer || "",
 			citations: citations,
+			sources: buildSources(currentHits, titles),
 			memoryUsed: memoryFacts,
 			memoryApplied: memoryApplied,
 			diff: diff,
+			usage: usage,
 			proposedDelta: opts.dryRun ? delta : null,
 			evidencePaperCount: paperIdsInEvidence.size,
 			degraded: false
@@ -449,6 +550,20 @@ PaperLoom.Pipeline = (function () {
 	}
 
 	/**
+	 * 删除对话历史（不是清屏，是真正删掉落盘的记录）。
+	 * paperId 为空时删除全部。
+	 * @returns {Promise<number>} 删掉的轮数
+	 */
+	async function clearTurns(paperId) {
+		const store = await PaperLoom.Storage.readJSON(TURNS_FILE, null)
+			|| { version: S.SCHEMA_VERSION, turns: [] };
+		const before = store.turns.length;
+		store.turns = paperId ? store.turns.filter(t => t.paperId !== paperId) : [];
+		await PaperLoom.Storage.writeJSON(TURNS_FILE, store);
+		return before - store.turns.length;
+	}
+
+	/**
 	 * 手动重建图谱：对选中的论文跑概念 + 关系抽取。
 	 * 关键工程细节：必须把已有节点列表喂给模型，要求优先复用现有 nodeId，
 	 * 跨论文连接就是在这里真正形成的。
@@ -456,7 +571,7 @@ PaperLoom.Pipeline = (function () {
 	async function rebuildGraph(items, onProgress) {
 		const progress = onProgress || function () { };
 		if (!PaperLoom.LLM.isConfigured()) {
-			throw new Error("未配置 API Key，无法抽取概念与关系");
+			throw new Error("尚未选择模型，无法抽取概念与关系。请到 设置 → PaperLoom 添加服务商并选择模型");
 		}
 
 		const summary = { papers: 0, addedNodes: 0, addedEdges: 0, rejected: 0, failed: [] };
@@ -566,7 +681,7 @@ ${JSON.stringify(existing)}
 	}
 
 	return {
-		ask, rebuildGraph, recentTurns, saveTurn, ensurePaperDocs,
+		ask, rebuildGraph, recentTurns, clearTurns, saveTurn, ensurePaperDocs,
 		libraryChunks, buildMessages, normalizeGraphDelta, pickRepresentativeChunks
 	};
 })();

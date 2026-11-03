@@ -24,7 +24,9 @@ PaperLoom.Storage = (function () {
 			_root = custom;
 		}
 		else {
-			_root = PathUtils.join(Zotero.DataDirectory.dir, "paperloom");
+			// 数据目录由 Compat 解析：不同 Zotero 版本取到的位置不同，但业务层不用关心
+			const base = PaperLoom.Compat.dataDir() || ".";
+			_root = PathUtils.join(base, "paperloom");
 		}
 		return _root;
 	}

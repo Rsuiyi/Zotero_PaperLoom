@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8" />
+	<title>新增模型服务商</title>
+	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
+	<style>
+		html, body { height: 100%; }
+		body {
+			font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+			margin: 0; padding: 18px 20px 70px; color: #1f2328; background: #fff;
+			overflow-y: auto; box-sizing: border-box;
+		}
+		h1 { font-size: 16px; margin: 0 0 12px; }
+		.row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+		.row > label { width: 110px; flex: none; color: #444d56; }
+		.row input[type="text"], .row input[type="password"] {
+			flex: 1; padding: 5px 8px; border: 1px solid #d1d5da; border-radius: 5px; font: inherit;
+		}
+		.hint { color: #6a737d; font-size: 12px; margin: 2px 0 10px 120px; }
+
+		.models {
+			border: 1px solid #e1e4e8; border-radius: 6px; padding: 8px;
+			max-height: 240px; overflow-y: auto; background: #fafbfc;
+		}
+		.models label { display: flex; align-items: center; gap: 6px; padding: 2px 4px; font-size: 12px; }
+		.models .empty { color: #6a737d; font-size: 12px; padding: 6px; }
+
+		footer {
+			position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 20px;
+			background: #ffffff; border-top: 1px solid #e1e4e8;
+			display: flex; align-items: center; gap: 10px; z-index: 10;
+		}
+		button { padding: 6px 14px; border: 1px solid #d1d5da; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+		button:hover { background: #f3f4f6; }
+		button.pl-primary { background: #2f6feb; border-color: #2f6feb; color: #fff; }
+		#status { margin-left: 6px; font-size: 12px; }
+		#status.ok { color: #1a7f37; }
+		#status.err { color: #cf222e; }
+		#status.busy { color: #6a737d; }
+	</style>
+</head>
+<body>
+	<h1 id="title">新增模型服务商</h1>
+
+	<div class="row">
+		<label for="name">名称</label>
+		<input type="text" id="name" placeholder="例如：XX 中转站 / DeepSeek 官方" />
+	</div>
+
+	<div class="row">
+		<label for="baseURL">Base URL</label>
+		<input type="text" id="baseURL" placeholder="https://example.com/v1" />
+	</div>
+	<div class="hint">填到 <code>/v1</code> 为止；插件会自动拼接 <code>/models</code> 与 <code>/chat/completions</code>。</div>
+
+	<div class="row">
+		<label for="apiKey">API Key</label>
+		<input type="password" id="apiKey" placeholder="sk-..." />
+		<button type="button" id="btn-eye">显示</button>
+	</div>
+
+	<div class="row">
+		<label></label>
+		<button type="button" id="btn-fetch">获取模型列表</button>
+		<span class="hint" style="margin:0">只会显示该接口真实返回的模型</span>
+	</div>
+
+	<div class="row" style="align-items: flex-start;">
+		<label>模型</label>
+		<div style="flex:1">
+			<div class="models" id="models-box">
+				<div class="empty">尚未获取。填好 Base URL 与 API Key 后点「获取模型列表」。</div>
+			</div>
+			<div style="margin-top: 6px;">
+				<button type="button" id="btn-all">全选</button>
+				<button type="button" id="btn-none">全不选</button>
+			</div>
+		</div>
+	</div>
+
+	<footer>
+		<button id="btn-save" class="pl-primary">保存</button>
+		<button id="btn-cancel">取消</button>
+		<span id="status"></span>
+	</footer>
+
+	<script src="chrome://paperloom/content/provider.js"></script>
+</body>
+</html>

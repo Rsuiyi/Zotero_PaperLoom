@@ -10,10 +10,39 @@
 (function () {
 	"use strict";
 
-	const Zotero = window.Zotero
-		|| (window.top && window.top.Zotero)
-		|| (window.parent && window.parent.Zotero);
-	const PL = Zotero && Zotero.PaperLoom;
+	// 同 chat.js：标签页可能在插件启动前就被恢复，领域层要允许"稍后才出现"
+	let Zotero = resolveZotero();
+	let PL = (window.arguments && window.arguments[0] && window.arguments[0].PaperLoom)
+		|| (Zotero && Zotero.PaperLoom);
+
+	function resolveZotero() {
+		const tries = [
+			() => (window.arguments && window.arguments[0] && window.arguments[0].Zotero),
+			() => window.Zotero,
+			() => (window.top && window.top.Zotero),
+			() => (window.parent && window.parent.Zotero),
+			() => (window.opener && window.opener.Zotero)
+		];
+		for (const get of tries) {
+			try {
+				const z = get();
+				if (z) return z;
+			}
+			catch (e) { /* 跨域时继续试下一条 */ }
+		}
+		return null;
+	}
+
+	async function waitForDomainLayer(maxMs) {
+		const deadline = Date.now() + (maxMs || 20000);
+		while (Date.now() < deadline) {
+			Zotero = resolveZotero();
+			PL = Zotero && Zotero.PaperLoom;
+			if (PL) return true;
+			await new Promise(r => setTimeout(r, 200));
+		}
+		return false;
+	}
 
 	const $ = (id) => document.getElementById(id);
 
@@ -22,10 +51,12 @@
 	let view = { nodes: [], edges: [] };     // 过滤后的视图
 	let sim = null;
 	let camera = { x: 0, y: 0, scale: 1 };
-	let selected = null;
+	let selection = new Set();              // 多选集合（nodeId）
 	let hover = null;
 	let dragging = null;
 	let panning = null;
+	let box = null;                         // 框选矩形 {x0,y0,x1,y1}
+	let multiSelectMode = false;            // 多选模式：不按修饰键也能连点多选
 
 	const COLORS = {
 		paper: "#2e7fe0",
@@ -42,29 +73,78 @@
 	if (document.readyState !== "loading") init();
 
 	let inited = false;
-	function init() {
+	async function init() {
 		if (inited) return;
 		inited = true;
+
+		// 内嵌模式（对话面板下方的小图谱）：只留画布，工具栏与详情栏由 CSS 隐藏
+		if (new URLSearchParams(location.search).get("embed") === "1") {
+			document.body.classList.add("pl-embed");
+		}
 
 		canvas = $("pl-graph-canvas");
 		wrap = $("pl-graph-canvas-wrap");
 		ctx = canvas.getContext("2d");
 
 		if (!PL) {
-			$("pl-graph-hint").textContent = "PaperLoom 领域层未加载，请重启 Zotero。";
-			return;
+			$("pl-graph-hint").textContent = "PaperLoom 正在加载…";
+			const ready = await waitForDomainLayer(20000);
+			if (!ready) {
+				$("pl-graph-hint").textContent = "PaperLoom 领域层尚未就绪，请关闭本页后重新打开。";
+				return;
+			}
+			$("pl-graph-hint").textContent = "";
 		}
 
 		$("pl-cross-only").addEventListener("change", rebuildView);
 		$("pl-show-papers").addEventListener("change", rebuildView);
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
+		$("pl-graph-add-node").addEventListener("click", addConcept);
+		$("pl-graph-del").addEventListener("click", deleteSelection);
+
+		// 多选模式：有些环境里 Shift 修饰键传不到 iframe，给一个不依赖修饰键的入口
+		$("pl-graph-multi").addEventListener("click", () => {
+			multiSelectMode = !multiSelectMode;
+			$("pl-graph-multi").textContent = "多选：" + (multiSelectMode ? "开" : "关");
+			$("pl-graph-multi").style.background = multiSelectMode ? "var(--pl-accent)" : "";
+			$("pl-graph-multi").style.color = multiSelectMode ? "#fff" : "";
+		});
+
+		// 键盘删除：焦点可能停在外层窗口，所以 window 和 document 都捕获
+		const onKeyDown = (ev) => {
+			if (ev.key === "Delete" || ev.key === "Backspace") {
+				if (selection.size) {
+					ev.preventDefault();
+					ev.stopPropagation();
+					deleteSelection();
+				}
+			}
+			else if (ev.key === "Escape") {
+				selection = new Set();
+				draw();
+			}
+		};
+		window.addEventListener("keydown", onKeyDown, true);
+		document.addEventListener("keydown", onKeyDown, true);
+
+		// Zotero 的键盘事件有时落在顶层文档：补一层，但只在图谱 iframe 有焦点时响应
+		try {
+			window.top.document.addEventListener("keydown", (ev) => {
+				if (!document.hasFocus()) return;
+				onKeyDown(ev);
+			}, true);
+		}
+		catch (e) { /* 跨域则忽略 */ }
+
+		// 拖拽/框选可能移出画布：move/up 挂到 window 上
+		window.addEventListener("mousemove", onMouseMove);
+		window.addEventListener("mouseup", onMouseUp);
 
 		canvas.addEventListener("mousedown", onMouseDown);
-		canvas.addEventListener("mousemove", onMouseMove);
-		canvas.addEventListener("mouseup", onMouseUp);
 		canvas.addEventListener("mouseleave", onMouseUp);
 		canvas.addEventListener("wheel", onWheel, { passive: false });
+		canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 		window.addEventListener("resize", () => { resize(); draw(); });
 		window.addEventListener("message", (ev) => {
@@ -89,6 +169,8 @@
 	async function load() {
 		try {
 			graph = await PL.GraphStore.load();
+			// 数据整体刷新后，旧的选中 id 可能已不存在
+			selection = new Set();
 			const stats = await PL.GraphStore.stats();
 			$("pl-graph-stats").textContent =
 				stats.papers + " 篇论文 · " + stats.concepts + " 个概念 · "
@@ -288,6 +370,76 @@
 		return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };
 	}
 
+	/**
+	 * 页内确认框。
+	 * 不用原生 confirm：它会弹系统模态框，还可能把图谱窗口压到后面。
+	 * @returns {Promise<boolean>}
+	 */
+	function confirmAction(text) {
+		return new Promise((resolve) => {
+			try {
+				const overlay = document.createElement("div");
+				overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.35);"
+					+ "display:flex;align-items:center;justify-content:center;z-index:99999;";
+
+				const box = document.createElement("div");
+				box.style.cssText = "background:#fff;color:#1f2328;border-radius:10px;padding:16px 18px;"
+					+ "max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,0.25);font:13px/1.6 sans-serif;";
+
+				const msg = document.createElement("div");
+				msg.textContent = text;
+				msg.style.marginBottom = "14px";
+
+				const row = document.createElement("div");
+				row.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+
+				const cancel = document.createElement("button");
+				cancel.textContent = "取消";
+				cancel.style.cssText = "padding:5px 14px;border:1px solid #d1d5da;border-radius:6px;background:#fff;cursor:pointer;";
+
+				const ok = document.createElement("button");
+				ok.textContent = "删除";
+				ok.style.cssText = "padding:5px 14px;border:1px solid #cf222e;border-radius:6px;"
+					+ "background:#cf222e;color:#fff;cursor:pointer;";
+
+				const close = (value) => {
+					try { overlay.remove(); } catch (e) { /* ignore */ }
+					resolve(value);
+				};
+
+				cancel.addEventListener("click", () => close(false));
+				ok.addEventListener("click", () => close(true));
+				overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(false); });
+
+				row.appendChild(cancel);
+				row.appendChild(ok);
+				box.appendChild(msg);
+				box.appendChild(row);
+				overlay.appendChild(box);
+				(document.body || document.documentElement).appendChild(overlay);
+				ok.focus();
+			}
+			catch (e) {
+				resolve(true);   // 极端情况下不阻塞删除
+			}
+		});
+	}
+
+	function promptAction(text, def) {
+		try { return window.prompt(text, def); } catch (e) { /* ignore */ }
+		try { return Zotero.getMainWindow().prompt(text, def); } catch (e) { /* ignore */ }
+		return null;
+	}
+
+	function alertAction(text) {
+		try {
+			const win = Zotero.getMainWindow && Zotero.getMainWindow();
+			if (win && typeof win.alert === "function") { win.alert(text); return; }
+		}
+		catch (e) { /* ignore */ }
+		try { window.alert(text); } catch (e) { /* ignore */ }
+	}
+
 	function draw() {
 		const w = wrap.clientWidth || 800;
 		const h = wrap.clientHeight || 600;
@@ -296,13 +448,10 @@
 		const byId = Object.create(null);
 		for (const n of view.nodes) byId[n.nodeId] = n;
 
-		const highlightIds = new Set();
-		if (selected) {
-			highlightIds.add(selected.nodeId);
-			for (const e of view.edges) {
-				if (e.source === selected.nodeId) highlightIds.add(e.target);
-				if (e.target === selected.nodeId) highlightIds.add(e.source);
-			}
+		// 高亮 = 选中的点 + 这些点出边指向的点
+		const highlightIds = new Set(selection);
+		for (const e of view.edges) {
+			if (selection.has(e.source)) highlightIds.add(e.target);
 		}
 
 		// 边
@@ -310,7 +459,7 @@
 			const a = byId[e.source], b = byId[e.target];
 			if (!a || !b) continue;
 			const pa = toScreen(a), pb = toScreen(b);
-			const isHi = selected && (e.source === selected.nodeId || e.target === selected.nodeId);
+			const isHi = selection.has(e.source) || selection.has(e.target);
 
 			ctx.beginPath();
 			ctx.moveTo(pa.x, pa.y);
@@ -347,7 +496,7 @@
 				: n.type === "claim" ? COLORS.claim
 					: cross ? COLORS.crossConcept : COLORS.concept;
 
-			const dim = selected && !highlightIds.has(n.nodeId);
+			const dim = selection.size > 0 && !highlightIds.has(n.nodeId);
 			ctx.globalAlpha = dim ? 0.3 : 1;
 
 			ctx.beginPath();
@@ -359,12 +508,18 @@
 			}
 			ctx.fillStyle = color;
 			ctx.fill();
-			if (selected && selected.nodeId === n.nodeId) {
-				ctx.lineWidth = 2.5;
+			if (selection.has(n.nodeId)) {
+				// 光晕 + 双层描边，确保一眼看出被选中
+				ctx.save();
+				ctx.shadowColor = "rgba(46,127,224,0.95)";
+				ctx.shadowBlur = 14;
+				ctx.lineWidth = 3.5;
 				ctx.strokeStyle = "#fff";
 				ctx.stroke();
-				ctx.lineWidth = 1.2;
-				ctx.strokeStyle = color;
+				ctx.restore();
+
+				ctx.lineWidth = 1.8;
+				ctx.strokeStyle = "#2e7fe0";
 				ctx.stroke();
 			}
 			if (hover && hover.nodeId === n.nodeId) {
@@ -374,7 +529,7 @@
 			}
 
 			// 标签：节点够大或被选中/悬停时才画，避免糊成一片
-			if (r > 7 || (selected && highlightIds.has(n.nodeId)) || (hover && hover.nodeId === n.nodeId)) {
+			if (r > 7 || highlightIds.has(n.nodeId) || (hover && hover.nodeId === n.nodeId)) {
 				const label = String(n.label || "").slice(0, 18);
 				ctx.font = (n.type === "paper" ? "600 " : "") + "11px sans-serif";
 				ctx.textAlign = "center";
@@ -387,6 +542,36 @@
 			}
 			ctx.globalAlpha = 1;
 		}
+
+		// 框选矩形
+		if (box) {
+			const x = Math.min(box.x0, box.x1), y = Math.min(box.y0, box.y1);
+			const bw = Math.abs(box.x1 - box.x0), bh = Math.abs(box.y1 - box.y0);
+			ctx.save();
+			ctx.fillStyle = "rgba(46,127,224,0.12)";
+			ctx.strokeStyle = "rgba(46,127,224,0.85)";
+			ctx.lineWidth = 1;
+			ctx.fillRect(x, y, bw, bh);
+			ctx.strokeRect(x, y, bw, bh);
+			ctx.restore();
+		}
+
+		updateSelUI();
+	}
+
+	/** 同步"删除选中"按钮的文字与可用状态 */
+	function updateSelUI() {
+		try {
+			const btn = $("pl-graph-del");
+			if (!btn) return;
+			const n = selection.size;
+			btn.textContent = n ? ("删除选中 (" + n + ")") : "删除选中";
+			btn.disabled = n === 0;
+
+			const info = $("pl-graph-selinfo");
+			if (info) info.textContent = n > 1 ? ("已选 " + n + " 个节点") : "";
+		}
+		catch (e) { /* ignore */ }
 	}
 
 	// ------------------------------------------------------------ 交互
@@ -404,20 +589,42 @@
 	}
 
 	function onMouseDown(ev) {
+		try { canvas.focus(); } catch (e) { /* ignore */ }
 		const rect = canvas.getBoundingClientRect();
 		const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
 		const node = pick(sx, sy);
-		if (node) {
-			dragging = node;
-			selected = node;
-			showDetail(node);
-			draw();
-		}
-		else {
+
+		// 中键 / Alt 拖拽 = 平移画布（左键留给框选）
+		if (ev.button === 2 || ev.button === 1 || ev.altKey) {
+			try { ev.preventDefault(); } catch (e) { /* ignore */ }
 			panning = { x: sx, y: sy, cx: camera.x, cy: camera.y };
-			selected = null;
-			draw();
+			return;
 		}
+
+		if (node) {
+			const multi = ev.shiftKey || ev.ctrlKey || ev.metaKey || multiSelectMode;
+			if (multi) {
+				// shift 点选：加入 / 移出多选
+				if (selection.has(node.nodeId)) selection.delete(node.nodeId);
+				else selection.add(node.nodeId);
+			}
+			else {
+				selection = new Set([node.nodeId]);
+				dragging = node;
+			}
+			if (selection.size > 1) showSelectionSummary();
+			else if (selection.size === 1) showDetail(node);
+			draw();
+			return;
+		}
+
+		// 空白处按下：开始框选；不按 shift 则清空已有选择
+		if (!ev.shiftKey) {
+			selection = new Set();
+			$("pl-graph-detail").innerHTML = "";
+		}
+		box = { x0: sx, y0: sy, x1: sx, y1: sy };
+		draw();
 	}
 
 	function onMouseMove(ev) {
@@ -438,6 +645,12 @@
 			draw();
 			return;
 		}
+		if (box) {
+			box.x1 = sx;
+			box.y1 = sy;
+			draw();
+			return;
+		}
 		const node = pick(sx, sy);
 		if ((node && node.nodeId) !== (hover && hover.nodeId)) {
 			hover = node;
@@ -447,8 +660,50 @@
 	}
 
 	function onMouseUp() {
+		if (box) {
+			const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1);
+			const y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
+
+			// 太小的矩形视为普通单击，不做框选
+			if (x1 - x0 > 4 && y1 - y0 > 4) {
+				for (const n of view.nodes) {
+					const p = toScreen(n);
+					if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) {
+						selection.add(n.nodeId);
+					}
+				}
+				if (selection.size > 1) {
+						showSelectionSummary();
+				}
+				else if (selection.size === 1) {
+					const onlyId = Array.from(selection)[0];
+					const only = view.nodes.find(n => n.nodeId === onlyId);
+					if (only) showDetail(only);
+				}
+			}
+			box = null;
+			draw();
+		}
+
 		dragging = null;
 		panning = null;
+	}
+
+	/** Del / Backspace：删除所有选中的节点（先确认） */
+	async function deleteSelection() {
+		if (!selection.size) return;
+		if (!(await confirmAction("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。"))) return;
+
+		try {
+			await PL.GraphStore.removeNodes(Array.from(selection));
+			selection = new Set();
+			$("pl-graph-detail").innerHTML = "";
+			$("pl-graph-hint").style.display = "block";
+			await load();
+		}
+		catch (e) {
+			alertAction("删除失败：" + e);
+		}
 	}
 
 	function onWheel(ev) {
@@ -464,7 +719,82 @@
 		draw();
 	}
 
+	// ------------------------------------------------------------ 手动编辑
+
+	async function addConcept() {
+		const input = $("pl-graph-new-label");
+		const label = String(input.value || "").trim();
+		if (!label) return;
+		try {
+			await PL.GraphStore.upsertNode({ type: "concept", label: label, paperIds: [], weight: 1 });
+			input.value = "";
+			await load();
+		}
+		catch (e) {
+			alertAction("添加概念失败：" + e);
+		}
+	}
+
+	async function deleteNodeAction(node) {
+		if (!(await confirmAction("删除概念「" + node.label + "」及其全部关联边？"))) return;
+		try {
+			await PL.GraphStore.removeNode(node.nodeId);
+			$("pl-graph-detail").innerHTML = "";
+			$("pl-graph-hint").style.display = "block";
+			await load();
+		}
+		catch (e) {
+			alertAction("删除失败：" + e);
+		}
+	}
+
+	async function renameNodeAction(node) {
+		const next = promptAction("新的概念名称", node.label);
+		if (next == null) return;
+		const label = String(next).trim();
+		if (!label || label === node.label) return;
+		try {
+			const updated = await PL.GraphStore.renameNode(node.nodeId, label);
+			await load();
+			if (updated) showDetail(updated);
+		}
+		catch (e) {
+			alertAction("改名失败：" + e);
+		}
+	}
+
 	// ------------------------------------------------------------ 证据卡片
+
+	/** 多选时右侧显示汇总，避免看起来"只选了一个" */
+	function showSelectionSummary() {
+		const box = $("pl-graph-detail");
+		box.innerHTML = "";
+		$("pl-graph-hint").style.display = "none";
+
+		const card = document.createElement("div");
+		card.className = "pl-evidence-card";
+
+		const h = document.createElement("h4");
+		h.textContent = "已选中 " + selection.size + " 个节点";
+		card.appendChild(h);
+
+		const tip = document.createElement("div");
+		tip.className = "pl-muted";
+		tip.textContent = "按 Delete 或点工具栏「删除选中」删除；Esc 取消选择。";
+		card.appendChild(tip);
+
+		const list = document.createElement("div");
+		list.className = "pl-muted";
+		list.style.marginTop = "6px";
+		list.textContent = view.nodes
+			.filter(n => selection.has(n.nodeId))
+			.map(n => n.label)
+			.slice(0, 40)
+			.join("、");
+		card.appendChild(list);
+
+		box.appendChild(card);
+	}
 
 	function showDetail(node) {
 		const box = $("pl-graph-detail");
@@ -483,6 +813,22 @@
 			+ " · 关联 " + (node.paperIds || []).length + " 篇论文"
 			+ ((node.paperIds || []).length >= 2 ? "（跨论文）" : "");
 		head.appendChild(meta);
+
+		// 看图即改：重命名 / 删除
+		const actions = document.createElement("div");
+		actions.className = "pl-graph-actions";
+
+		const renameBtn = document.createElement("button");
+		renameBtn.textContent = "重命名";
+		renameBtn.addEventListener("click", () => renameNodeAction(node));
+
+		const delBtn = document.createElement("button");
+		delBtn.textContent = "删除节点";
+		delBtn.addEventListener("click", () => deleteNodeAction(node));
+
+		actions.appendChild(renameBtn);
+		actions.appendChild(delBtn);
+		head.appendChild(actions);
 
 		if ((node.aliases || []).length) {
 			const al = document.createElement("div");
@@ -538,6 +884,22 @@
 			jump.textContent = "跳转到 p." + (ev.page || 1);
 			jump.addEventListener("click", () => jumpTo(ev.paperId, ev.page));
 			card.appendChild(jump);
+
+			const delEdge = document.createElement("button");
+			delEdge.textContent = "删除这条边";
+			delEdge.addEventListener("click", async () => {
+				if (!(await confirmAction("删除这条关联边？"))) return;
+				try {
+					await PL.GraphStore.removeEdge(e.edgeId);
+					await load();
+					const fresh = (graph.nodes || []).find(n => n.nodeId === node.nodeId);
+					if (fresh) showDetail(fresh);
+				}
+				catch (err) {
+					alertAction("删除失败：" + err);
+				}
+			});
+			card.appendChild(delEdge);
 
 			box.appendChild(card);
 		}

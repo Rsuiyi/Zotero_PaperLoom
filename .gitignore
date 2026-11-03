@@ -1,0 +1,39 @@
+# ============================================================
+# PaperLoom .gitignore
+# 原则：凡是「个人数据 / 密钥 / 可再生成的产物」一律不进仓库
+# ============================================================
+
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+build/
+*.xpi
+*.zip
+
+# ---- 本地配置与密钥（绝不提交）----
+.env
+.env.*
+secrets.json
+config.local.*
+apikey*
+!apikey.example.json
+
+# ---- 运行期缓存与评测产出 ----
+cache/
+*.cache.json
+eval/results/
+*.log
+
+# ---- 个人文献数据（含隐私，切勿上传）----
+demo/
+*.sqlite
+*.sqlite-journal
+*.zotero-ft-cache
+paper-library/
+
+# ---- 编辑器 / 系统文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

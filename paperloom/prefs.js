@@ -1,20 +1,39 @@
 // PaperLoom 默认偏好
 // 键名统一加 extensions.paperloom. 前缀，避免与其他插件撞键。
 
-// ---- LLM（OpenAI 兼容协议，base URL 与模型名全部可配）
-pref("extensions.paperloom.apiBase", "https://api.deepseek.com/v1");
+// ---- 模型服务商注册表
+// JSON 数组，每条：{ id, name, baseURL, apiKey, models: [], fetchedAt }
+// 模型只来自服务商接口实际返回的列表，不再有"内置目录"。
+pref("extensions.paperloom.providers", "[]");
+// 模型引用格式 "providerId|model"；回答与抽取可以来自不同服务商
+pref("extensions.paperloom.chatModelRef", "");
+pref("extensions.paperloom.extractModelRef", "");
+
+// ---- 旧版单服务商配置（仅用于升级迁移，新代码不再读取）
+pref("extensions.paperloom.apiBase", "https://api.deepseek.com");
 pref("extensions.paperloom.apiKey", "");
-// 对话用强模型
-pref("extensions.paperloom.chatModel", "deepseek-chat");
-// 抽取 / 建图用便宜模型
-pref("extensions.paperloom.extractModel", "deepseek-chat");
-// ⚠ 必须 ≥ 4096：DeepSeek 系推理模型的 reasoning token 计入 completion，
-//   给小了会出现 content 为空。
+pref("extensions.paperloom.chatModel", "");
+pref("extensions.paperloom.extractModel", "");
+
+// 用户附加的系统提示词：拼在默认规则之后，可覆盖回答风格，不能违反证据与引用规则
+pref("extensions.paperloom.systemPrompt", "");
+
+// 对话区字号（px）；界面里用 A− / A+ 调整
+pref("extensions.paperloom.fontSize", 13);
+
+// 推理强度："" = 不发送该参数（自动）；可选 low / medium / high / max
+// 只有服务商支持 reasoning_effort 时才有效，不支持会返回 400
+pref("extensions.paperloom.reasoningEffort", "");
+
+// ⚠ 必须 ≥ 4096：推理模型的 reasoning token 计入 completion，给小了会出现 content 为空。
 pref("extensions.paperloom.maxTokens", 4096);
 pref("extensions.paperloom.temperature", "0.3");
 pref("extensions.paperloom.timeoutMs", 90000);
 // 所有 LLM 结果按 hash(prompt) 落盘缓存，开发期反复调试不烧钱
 pref("extensions.paperloom.useCache", true);
+
+// ---- 诊断：启动后自动跑一次模型列表请求，结果写入 <数据目录>/paperloom/selftest.json
+pref("extensions.paperloom.selfTest", true);
 
 // ---- 存储：留空则使用 <Zotero 数据目录>/paperloom
 pref("extensions.paperloom.dataDir", "");

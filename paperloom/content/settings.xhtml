@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8" />
+	<title>PaperLoom 设置</title>
+	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
+	<style>
+		/* 设置界面只有这一份实现：?embed=1 时嵌进 Zotero 设置面板，否则独立窗口 */
+		html, body { height: 100%; }
+		body {
+			font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+			margin: 0; padding: 20px 24px 76px; color: #1f2328; background: #fff;
+			overflow-y: auto;
+			box-sizing: border-box;
+		}
+		h1 { font-size: 18px; margin: 0 0 4px; }
+		h2 { font-size: 14px; margin: 0 0 10px; }
+		.section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+		.section-head h2 { margin: 0; }
+		.pl-hint { color: #6a737d; margin: 0 0 18px; }
+
+		section { border: 1px solid #e1e4e8; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+		.row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+		.row > label { width: 150px; flex: none; color: #444d56; }
+		.row input[type="text"], .row input[type="password"], .row input[type="number"], .row select {
+			padding: 5px 8px; border: 1px solid #d1d5da; border-radius: 5px; font: inherit; background: #fff;
+		}
+		.row input[type="text"], .row input[type="password"], .row input[type="number"] { flex: 1; }
+		.row select { min-width: 280px; max-width: 100%; }
+		.row .unit { color: #6a737d; font-size: 12px; }
+		.desc { color: #6a737d; font-size: 12px; margin: 2px 0 0 160px; }
+
+		/* 服务商表格 */
+		.pl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+		.pl-table th, .pl-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eaecef; vertical-align: middle; }
+		.pl-table th { color: #6a737d; font-weight: 600; }
+		.pl-table td.url { color: #6a737d; word-break: break-all; }
+		.pl-table button { padding: 2px 8px; font-size: 12px; margin-right: 4px; }
+		.pl-empty-row { color: #6a737d; text-align: center; padding: 14px 0; }
+
+		/* 底栏从第一屏就固定在底部：不透明背景 + fixed，
+		   不能再用 sticky（sticky 要滚动到底才贴住，表现为"一开始看不到保存"） */
+		footer {
+			position: fixed; left: 0; right: 0; bottom: 0;
+			padding: 12px 24px;
+			background: #ffffff;
+			border-top: 1px solid #e1e4e8;
+			display: flex; align-items: center; gap: 10px;
+			z-index: 10;
+		}
+		button { padding: 6px 14px; border: 1px solid #d1d5da; border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+		button:hover { background: #f3f4f6; }
+		button.pl-primary { background: #2f6feb; border-color: #2f6feb; color: #fff; }
+		button.pl-primary:hover { background: #2860d0; }
+		#status { margin-left: 8px; font-size: 12px; }
+		#status.ok { color: #1a7f37; }
+		#status.err { color: #cf222e; }
+		#status.busy { color: #6a737d; }
+
+		body.pl-embed { padding: 0 0 64px; background: transparent; }
+		body.pl-embed h1, body.pl-embed .pl-hint { display: none; }
+		/* 内嵌时同样固定在 iframe 视口底部，并且必须是不透明背景 */
+		body.pl-embed footer {
+			position: fixed; left: 0; right: 0; bottom: 0;
+			padding: 8px 0;
+			background: #ffffff;
+		}
+	</style>
+</head>
+<body>
+	<h1>PaperLoom 设置</h1>
+	<p class="pl-hint" id="win-geo" style="margin:0 0 8px;font-size:11px;color:#6a737d;"></p>
+	<p class="pl-hint">先添加模型服务商（Base URL + API Key），获取它实际提供的模型，再分别指定对话模型与图谱抽取模型。所有配置只保存在本机。</p>
+
+	<section>
+		<div class="section-head">
+			<h2>模型服务商</h2>
+			<span style="flex:1"></span>
+			<button type="button" id="btn-add-provider" class="pl-primary">新增服务商</button>
+		</div>
+
+		<table class="pl-table">
+			<thead>
+				<tr><th>名称</th><th>Base URL</th><th>模型数</th><th style="width:200px">操作</th></tr>
+			</thead>
+			<tbody id="providers-body"></tbody>
+		</table>
+		<div class="pl-empty-row" id="providers-empty">还没有服务商。点右上「新增服务商」。</div>
+	</section>
+
+	<section>
+		<h2>模型选择</h2>
+		<div class="row">
+			<label>对话模型</label>
+			<details class="pl-picker" id="chatModelPicker">
+				<summary id="chatModelSummary">未选择</summary>
+				<div class="pl-picker-list" id="chatModelList"></div>
+			</details>
+		</div>
+		<div class="desc">回答问题时使用，建议选能力更强、上下文更长的模型。</div>
+
+		<div class="row">
+			<label>图谱抽取模型</label>
+			<details class="pl-picker" id="extractModelPicker">
+				<summary id="extractModelSummary">未选择</summary>
+				<div class="pl-picker-list" id="extractModelList"></div>
+			</details>
+		</div>
+		<div class="desc">建图谱、抽概念与记忆时使用，可以和对话模型来自不同服务商。</div>
+
+		<div class="row">
+			<label></label>
+			<button type="button" id="btn-test">测试所选对话模型</button>
+		</div>
+	</section>
+
+	<section>
+		<h2>全局记忆与图谱</h2>
+		<div class="row">
+			<label></label>
+			<button type="button" id="btn-manage-memory">查看 / 编辑记忆</button>
+			<button type="button" id="btn-manage-graph">查看 / 编辑图谱</button>
+		</div>
+		<div class="desc">记忆支持新增、改正、删除；图谱支持新增概念、重命名、删除节点与边。修改立即写入本地。</div>
+		<iframe id="pl-manage-frame" style="display:none;width:100%;height:420px;border:1px solid #e1e4e8;border-radius:6px;margin-top:8px;"></iframe>
+	</section>
+
+	<section>
+		<h2>系统提示词</h2>
+		<div class="row" style="align-items: flex-start;">
+			<label for="systemPrompt" style="padding-top:6px;">附加提示词</label>
+			<textarea id="systemPrompt" rows="6" placeholder="例如：用中文回答；先给结论再给依据；解释术语时给一个类比。"
+				style="flex:1;padding:6px 8px;border:1px solid #d1d5da;border-radius:5px;font:inherit;resize:vertical;"></textarea>
+		</div>
+		<div class="desc">会拼在默认规则之后：可以改变语气、长度、语言，但不能让它编造证据或省略引用。</div>
+	</section>
+
+	<section>
+		<h2>通用参数</h2>
+		<div class="row">
+			<label for="maxTokens">max_tokens</label>
+			<input type="number" id="maxTokens" min="1024" step="1024" style="max-width:160px" />
+			<span class="unit">≥ 4096 更稳</span>
+		</div>
+		<div class="desc">推理模型的 reasoning token 也计入 completion，给小了会出现空回答。</div>
+
+		<div class="row">
+			<label for="temperature">temperature</label>
+			<input type="text" id="temperature" style="max-width:120px" />
+			<span class="unit">0–2，问答建议 0.2–0.5</span>
+		</div>
+
+		<div class="row">
+			<label for="timeoutMs">超时（毫秒）</label>
+			<input type="number" id="timeoutMs" min="5000" step="5000" style="max-width:160px" />
+		</div>
+
+		<div class="row">
+			<label for="useCache">缓存结果</label>
+			<input type="checkbox" id="useCache" />
+			<span class="unit">按提示词哈希缓存</span>
+		</div>
+
+		<div class="row">
+			<label for="fontSize">对话字号（px）</label>
+			<input type="number" id="fontSize" min="10" max="22" step="1" style="max-width:100px" />
+			<span class="unit">面板里也可用 A− / A+</span>
+		</div>
+
+		<div class="row">
+			<label>推理强度</label>
+			<!-- 不用原生 <select>：chrome iframe 里原生下拉弹层经常点不开，
+			     改成一组按钮，点哪个生效哪个，没有弹层 -->
+			<div class="pl-seg" id="effort-seg">
+				<button type="button" data-effort="">自动</button>
+				<button type="button" data-effort="low">低</button>
+				<button type="button" data-effort="high">高</button>
+				<button type="button" data-effort="max">最大</button>
+			</div>
+			<span class="unit" id="effort-hint">自动 = 不发送推理参数</span>
+		</div>
+		<div class="desc">
+			档位对齐 DeepSeek V4 的 <code>low / high / max</code>。DeepSeek 推理模型会同时发送
+			<code>thinking:{type:"enabled"}</code>；不支持该参数的服务商会自动降级并提示。
+		</div>
+	</section>
+
+	<section>
+		<h2>存储</h2>
+		<div class="row">
+			<label for="dataDir">数据目录</label>
+			<input type="text" id="dataDir" placeholder="留空 = Zotero 数据目录/paperloom" />
+		</div>
+		<div class="row">
+			<label>当前实际位置</label>
+			<span id="resolvedDir" class="unit">—</span>
+		</div>
+	</section>
+
+	<footer>
+		<button id="btn-save" class="pl-primary">保存</button>
+		<button id="btn-close">关闭</button>
+		<span id="status"></span>
+	</footer>
+
+	<script src="chrome://paperloom/content/settings.js"></script>
+</body>
+</html>

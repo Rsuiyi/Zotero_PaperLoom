@@ -165,6 +165,8 @@ PaperLoom.Schema = (function () {
 			citations: Array.isArray(o.citations) ? o.citations : [],
 			memoryUsed: Array.isArray(o.memoryUsed) ? o.memoryUsed : [],
 			graphTouched: Array.isArray(o.graphTouched) ? o.graphTouched : [],
+			// 本轮 token 用量：{input, output, cached, total, localCache?}
+			usage: o.usage || null,
 			createdAt: o.createdAt || nowISO()
 		};
 	}
