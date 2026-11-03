@@ -99,12 +99,14 @@
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
 		$("pl-graph-add-node").addEventListener("click", addConcept);
+		$("pl-graph-del").addEventListener("click", deleteSelection);
 
-		// Del / Backspace 删除选中节点；Esc 清空选择
-		window.addEventListener("keydown", (ev) => {
+		// 键盘删除：焦点可能停在外层窗口，所以 window 和 document 都捕获
+		const onKeyDown = (ev) => {
 			if (ev.key === "Delete" || ev.key === "Backspace") {
 				if (selection.size) {
 					ev.preventDefault();
+					ev.stopPropagation();
 					deleteSelection();
 				}
 			}
@@ -113,7 +115,13 @@
 				selected = null;
 				draw();
 			}
-		});
+		};
+		window.addEventListener("keydown", onKeyDown, true);
+		document.addEventListener("keydown", onKeyDown, true);
+
+		// 拖拽/框选可能移出画布：move/up 挂到 window 上
+		window.addEventListener("mousemove", onMouseMove);
+		window.addEventListener("mouseup", onMouseUp);
 
 		canvas.addEventListener("mousedown", onMouseDown);
 		canvas.addEventListener("mousemove", onMouseMove);
@@ -455,6 +463,20 @@
 			ctx.strokeRect(x, y, bw, bh);
 			ctx.restore();
 		}
+
+		updateSelUI();
+	}
+
+	/** 同步"删除选中"按钮的文字与可用状态 */
+	function updateSelUI() {
+		try {
+			const btn = $("pl-graph-del");
+			if (!btn) return;
+			const n = selection.size;
+			btn.textContent = n ? ("删除选中 (" + n + ")") : "删除选中";
+			btn.disabled = n === 0;
+		}
+		catch (e) { /* ignore */ }
 	}
 
 	// ------------------------------------------------------------ 交互
@@ -472,6 +494,7 @@
 	}
 
 	function onMouseDown(ev) {
+		try { canvas.focus(); } catch (e) { /* ignore */ }
 		const rect = canvas.getBoundingClientRect();
 		const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
 		const node = pick(sx, sy);

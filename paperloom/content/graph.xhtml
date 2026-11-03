@@ -20,13 +20,14 @@
 		</label>
 		<input type="text" id="pl-graph-new-label" placeholder="新概念名" style="width:150px" />
 		<button id="pl-graph-add-node">添加概念</button>
+		<button id="pl-graph-del" title="删除选中的节点及其关联边">删除选中</button>
 		<button id="pl-graph-refresh">刷新</button>
 		<button id="pl-graph-fit">重置视图</button>
 	</div>
 
 	<div class="pl-graph-layout">
 		<div id="pl-graph-canvas-wrap">
-			<canvas id="pl-graph-canvas"></canvas>
+			<canvas id="pl-graph-canvas" tabindex="0"></canvas>
 		</div>
 		<div class="pl-graph-side" id="pl-graph-side">
 			<div class="pl-legend">
