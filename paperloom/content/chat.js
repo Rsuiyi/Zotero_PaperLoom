@@ -649,141 +649,98 @@
 	 * 同一篇论文可能同时有原版和翻译版，必须优先用用户当前实际打开的/选中的那份，
 	 * 否则点引用会莫名跳到原版。
 	 */
-	async function resolveOpenAttachment(paperId) {
-		const doc = await PL.Storage.readPaperDoc(paperId);
-		const fallback = doc && doc.attachmentId;
+	/**
+	 * 列出这篇论文所有可打开的 PDF 候选，按优先级排序：
+	 *   1. 当前已经打开的 reader（用户正在看的，可能是翻译版）
+	 *   2. 文献列表里当前选中的附件
+	 *   3. 解析记录里的默认附件
+	 *   4. 该条目下所有 PDF 附件
+	 * 任何一步出错都只是跳过，不影响后面的候选。
+	 */
+	async function candidateAttachments(paperId) {
+		const out = [];
+		const push = (id) => {
+			if (id && !out.includes(id)) out.push(id);
+		};
 
 		try {
-			// 1) 已经打开的 reader 里，属于这篇论文的（翻译版通常就在这）
 			const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
 			for (const r of readers) {
 				if (!r.itemID) continue;
 				const att = Zotero.Items.get(r.itemID);
 				if (!att || !att.parentItemID) continue;
 				const parent = Zotero.Items.get(att.parentItemID);
-				if (parent && parent.key === paperId) return r.itemID;
+				if (parent && parent.key === paperId) push(r.itemID);
 			}
+		}
+		catch (e) { /* 跳过 */ }
 
-			// 2) 文献列表里当前选中的附件
+		try {
 			const pane = Zotero.getActiveZoteroPane();
-			const selected = (pane && pane.getSelectedItems()) || [];
-			for (const it of selected) {
+			for (const it of (pane && pane.getSelectedItems()) || []) {
 				if (it.isAttachment && it.isAttachment() && it.parentItemID) {
 					const parent = Zotero.Items.get(it.parentItemID);
-					if (parent && parent.key === paperId) return it.id;
+					if (parent && parent.key === paperId) push(it.id);
 				}
 			}
 		}
-		catch (e) { /* 保持 fallback */ }
+		catch (e) { /* 跳过 */ }
 
-		return fallback;
+		try {
+			const doc = await PL.Storage.readPaperDoc(paperId);
+			push(doc && doc.attachmentId);
+		}
+		catch (e) { /* 跳过 */ }
+
+		try {
+			const id = await Zotero.Items.getIDFromLibraryAndKey(Zotero.Libraries.userLibraryID, paperId);
+			const item = id ? Zotero.Items.get(id) : null;
+			if (item && item.getAttachments) {
+				for (const aid of item.getAttachments() || []) {
+					const att = Zotero.Items.get(aid);
+					if (att && att.attachmentContentType === "application/pdf") push(att.id);
+				}
+			}
+		}
+		catch (e) { /* 跳过 */ }
+
+		return out;
 	}
 
 	async function jumpTo(paperId, page, quote) {
 		try {
-			const attachmentId = await resolveOpenAttachment(paperId);
+			const candidates = await candidateAttachments(paperId);
+			const pageIndex = Math.max(0, (page || 1) - 1);
 
-			if (attachmentId && Zotero.Reader && Zotero.Reader.open) {
+			// 逐个候选尝试打开；任何一个成功就停
+			for (const attachmentId of candidates) {
 				try {
-					await Zotero.Reader.open(attachmentId, { pageIndex: Math.max(0, (page || 1) - 1) });
-					// 打开后再把引用的那一句高亮出来（不是整页）
-					if (quote) highlightWithRetry(attachmentId, page, quote);
+					if (Zotero.Reader && Zotero.Reader.open) {
+						await Zotero.Reader.open(attachmentId, { pageIndex: pageIndex });
+						if (quote) highlightWithRetry(attachmentId, page, quote);
+						return;
+					}
+				}
+				catch (e) { /* 换下一个候选 */ }
+			}
+
+			// 阅读器 API 都失败：用官方 URI 打开第一个候选
+			if (candidates.length) {
+				const att = await Zotero.Items.getAsync(candidates[0]);
+				if (att && att.key) {
+					Zotero.launchURL("zotero://open-pdf/library/items/" + att.key + "?page=" + (page || 1));
 					return;
 				}
-				catch (e) { /* 私有 API 变动，走下面的 URI 路径 */ }
 			}
 
-			// fallback：官方 URI。需要附件的 itemKey
-			let attachmentKey = null;
-			if (attachmentId) {
-				const att = await Zotero.Items.getAsync(attachmentId);
-				attachmentKey = att && att.key;
-			}
-			if (attachmentKey) {
-				Zotero.launchURL("zotero://open-pdf/library/items/" + attachmentKey + "?page=" + (page || 1));
-				return;
-			}
-
-			// 再退一步：至少把条目选中
+			// 连附件都没有：至少选中条目
 			const id = await Zotero.Items.getIDFromLibraryAndKey(Zotero.Libraries.userLibraryID, paperId);
 			if (id) Zotero.getActiveZoteroPane().selectItem(id);
+			else showError("这篇论文找不到可打开的 PDF 附件。");
 		}
 		catch (e) {
 			showError("跳转失败：" + e);
 		}
-	}
-
-	// ------------------------------------------------------------ 原文高亮
-
-	/**
-	 * 在阅读器里高亮"引用的那一句"，而不是整页。
-	 * 做法：PDF 文本层里找包含引文前 40 个字符的 span，加背景色并滚动到可见处。
-	 * 只改 DOM，不写入 Zotero 标注库，避免污染用户自己的批注。
-	 */
-	async function highlightInReader(attachmentId, page, quote) {
-		const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
-		const reader = readers.find(r => r.itemID === attachmentId);
-		if (!reader) return false;
-
-		let win = null;
-		try {
-			win = reader._iframeWindow && (reader._iframeWindow.wrappedJSObject || reader._iframeWindow);
-		}
-		catch (e) {
-			return false;
-		}
-		if (!win || !win.document) return false;
-
-		const doc = win.document;
-		const spans = Array.from(doc.querySelectorAll(".textLayer span"));
-		if (!spans.length) return false;
-
-		const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
-		const needle = norm(quote).slice(0, 40);
-		if (!needle) return false;
-
-		let target = spans.find(sp => norm(sp.textContent).includes(needle));
-		if (!target) {
-			// 引文可能跨多个 span：退一步，用前几个较长词片段匹配
-			const frag = needle.split(" ").filter(w => w.length >= 4).slice(0, 3).join(" ");
-			if (frag) target = spans.find(sp => norm(sp.textContent).includes(frag));
-		}
-		if (!target) return false;
-
-		// 清掉上一次的高亮
-		for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
-
-		if (!doc.getElementById("paperloom-hl-style")) {
-			const style = doc.createElement("style");
-			style.id = "paperloom-hl-style";
-			style.textContent = ".paperloom-hl{background:rgba(255,214,0,.55)!important;border-radius:2px;box-shadow:0 0 0 2px rgba(255,214,0,.35);}";
-			(doc.head || doc.documentElement).appendChild(style);
-		}
-
-		target.classList.add("paperloom-hl");
-		try {
-			target.scrollIntoView({ block: "center", behavior: "smooth" });
-		}
-		catch (e) { /* ignore */ }
-		return true;
-	}
-
-	/** 阅读器打开后需要等页面渲染：最多重试约 8 秒 */
-	async function highlightWithRetry(attachmentId, page, quote) {
-		for (let i = 0; i < 20; i++) {
-			await new Promise(r => setTimeout(r, 400));
-			try {
-				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
-				const reader = readers.find(r => r.itemID === attachmentId);
-				if (reader && reader.navigate) {
-					try { await reader.navigate({ pageIndex: Math.max(0, (page || 1) - 1) }); }
-					catch (e) { /* ignore */ }
-				}
-				if (await highlightInReader(attachmentId, page, quote)) return true;
-			}
-			catch (e) { /* 重试 */ }
-		}
-		return false;
 	}
 
 	function openPanel(kind) {
