@@ -788,6 +788,27 @@
 	 * 在阅读器里高亮引用的那一句（而不是整页）。
 	 * 只在文本层 DOM 上加临时背景色，不写入 Zotero 标注库。
 	 */
+	/** 把目标元素滚到阅读器视口的垂直中间（阅读器导航后会再校正一次，所以多压几次） */
+	function centerElement(doc, el) {
+		try {
+			const container = doc.getElementById("viewerContainer")
+				|| doc.querySelector(".viewer-container")
+				|| doc.scrollingElement;
+			if (!container) return;
+
+			const r = el.getBoundingClientRect();
+			const c = container.getBoundingClientRect
+				? container.getBoundingClientRect()
+				: { top: 0, height: container.clientHeight || 0 };
+
+			const delta = (r.top + r.height / 2) - (c.top + c.height / 2);
+			if (Math.abs(delta) > 4) container.scrollTop = (container.scrollTop || 0) + delta;
+		}
+		catch (e) {
+			try { el.scrollIntoView({ block: "center" }); } catch (e2) { /* ignore */ }
+		}
+	}
+
 	// 每次点击递增；旧的等待循环发现序号变了就退出，避免两个引用互相跳页
 	let highlightSeq = 0;
 
@@ -874,8 +895,15 @@
 				}
 
 				if (first) {
-					try { first.scrollIntoView({ block: "center", behavior: "smooth" }); }
-					catch (e) { /* ignore */ }
+					const seqAtMatch = highlightSeq;
+					const recenter = () => {
+						if (seqAtMatch !== highlightSeq) return;   // 已有新的点击
+						centerElement(doc, first);
+					};
+					recenter();
+					setTimeout(recenter, 250);
+					setTimeout(recenter, 700);
+					setTimeout(recenter, 1400);
 					try { Zotero.debug("[PaperLoom] 高亮命中 p." + page + "（span " + ranges.length + "）"); } catch (e2) { }
 					return true;
 				}
