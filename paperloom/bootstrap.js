@@ -481,6 +481,31 @@ function registerReaderUI() {
 	}, PLUGIN_ID);
 }
 
+/**
+ * 把对话框挪到屏幕中央。
+ * centerscreen 在部分窗口管理器/多屏环境下不生效，窗口会贴在上沿；
+ * 这里在打开后再手动纠一次位置。
+ */
+function centerDialog(win, w) {
+	if (!w) return;
+	let tries = 0;
+	const timer = win.setInterval(() => {
+		tries++;
+		try {
+			const sw = w.screen && w.screen.availWidth;
+			const sh = w.screen && w.screen.availHeight;
+			if (sw && sh && w.outerWidth && w.outerHeight) {
+				w.moveTo(
+					Math.max(0, Math.round((sw - w.outerWidth) / 2)),
+					Math.max(0, Math.round((sh - w.outerHeight) / 2))
+				);
+			}
+		}
+		catch (e) { /* 窗口还没就绪 */ }
+		if (tries > 20) win.clearInterval(timer);
+	}, 100);
+}
+
 function removeDock(win) {
 	try {
 		const doc = win.document;
@@ -553,9 +578,10 @@ const TAB_SPECS = {
 function openSettings(win) {
 	const url = "chrome://paperloom/content/settings.xhtml";
 	try {
-		win.openDialog(url, "paperloom-settings",
+		const w = win.openDialog(url, "paperloom-settings",
 			"chrome,centerscreen,resizable,width=700,height=720",
 			{ Zotero: Zotero, PaperLoom: PaperLoom });
+		centerDialog(win, w);
 	}
 	catch (e) {
 		log("独立设置窗口打开失败，退回 Tab: " + e);

@@ -805,58 +805,57 @@
 		}
 		if (!win || !win.document) return false;
 
-		// 文本层可能在主文档，也可能在子 frame 里，两处都找
 		const docs = [win.document];
 		try {
-			for (let i = 0; i < win.frames.length; i++) {
-				docs.push(win.frames[i].document);
-			}
+			for (let i = 0; i < win.frames.length; i++) docs.push(win.frames[i].document);
 		}
 		catch (e) { /* 跨域 frame 跳过 */ }
 
-		const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+		// 只保留字母/数字/汉字，大小写归一：绕开连字符、引号、软连字符等排版差异
+		const squash = (v) => String(v || "")
+			.toLowerCase()
+			.replace(/[\s ]+/g, "")
+			.replace(/[^\p{L}\p{N}]+/gu, "");
+
+		const key = squash(quote);
+		if (!key) return false;
 
 		for (const doc of docs) {
 			const layers = Array.from(doc.querySelectorAll(".textLayer"));
 			if (!layers.length) continue;
 
-			// 优先只看目标页
-			let candidates = layers;
+			// 目标页优先，其次全文档
 			const targetPage = layers.find((l) => {
-				const p = l.closest(".page");
+				const p = l.closest("[data-page-number]");
 				return p && Number(p.getAttribute("data-page-number")) === Number(page);
 			});
-			if (targetPage) candidates = [targetPage];
+			const ordered = targetPage
+				? [targetPage].concat(layers.filter(l => l !== targetPage))
+				: layers;
 
-			// 把整页文字去掉空白后拼接，并记录每个 span 的区间 —— 引文跨 span 也能命中
-			for (const layer of candidates) {
+			for (const layer of ordered) {
 				const spans = Array.from(layer.querySelectorAll("span"));
 				if (!spans.length) continue;
 
 				let full = "";
 				const ranges = [];
 				for (const sp of spans) {
-					const t = String(sp.textContent || "").replace(/\s+/g, "");
+					const t = squash(sp.textContent);
 					if (!t) continue;
 					ranges.push({ span: sp, start: full.length, end: full.length + t.length });
 					full += t;
 				}
+				if (!full) continue;
 
-				const key = String(quote || "").replace(/\s+/g, "");
-				if (!key || !full) continue;
-
-				// 先用前 30 字找，找不到再缩短到 16 字
+				// 从长到短试前缀，排版差异越大越可能只能靠短片段命中
 				let from = -1;
-				let len = 0;
-				for (const size of [30, 16]) {
-					const probe = key.slice(0, size);
-					if (probe.length < 8) continue;
-					const idx = full.indexOf(probe);
-					if (idx >= 0) { from = idx; len = key.length; break; }
+				for (const size of [40, 30, 20, 12]) {
+					if (key.length < size) continue;
+					const idx = full.indexOf(key.slice(0, size));
+					if (idx >= 0) { from = idx; break; }
 				}
 				if (from < 0) continue;
 
-				// 清掉上一次高亮
 				for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
 
 				if (!doc.getElementById("paperloom-hl-style")) {
@@ -866,7 +865,7 @@
 					(doc.head || doc.documentElement).appendChild(style);
 				}
 
-				const to = from + Math.max(len, 8);
+				const to = from + Math.min(key.length, 80);
 				let first = null;
 				for (const r of ranges) {
 					if (r.end <= from || r.start >= to) continue;
@@ -877,13 +876,23 @@
 				if (first) {
 					try { first.scrollIntoView({ block: "center", behavior: "smooth" }); }
 					catch (e) { /* ignore */ }
-					try { Zotero.debug("[PaperLoom] 高亮命中 p." + page + "，span 数 " + ranges.length); } catch (e2) { }
+					try { Zotero.debug("[PaperLoom] 高亮命中 p." + page + "（span " + ranges.length + "）"); } catch (e2) { }
 					return true;
 				}
 			}
 		}
 
-		try { Zotero.debug("[PaperLoom] 高亮未命中 p." + page + "，文本层数 " + docs.reduce((n, d) => n + d.querySelectorAll('.textLayer').length, 0)); } catch (e) { }
+		try {
+			let layers = 0;
+			let spans = 0;
+			for (const d of docs) {
+				layers += d.querySelectorAll(".textLayer").length;
+				spans += d.querySelectorAll(".textLayer span").length;
+			}
+			Zotero.debug("[PaperLoom] 高亮未命中 p." + page + "，文本层 " + layers + "，span " + spans);
+		}
+		catch (e) { /* ignore */ }
+
 		return false;
 	}
 

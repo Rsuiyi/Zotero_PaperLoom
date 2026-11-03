@@ -214,12 +214,34 @@
 		setStatus("已删除服务商", "ok");
 	}
 
+	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */
+	function centerWindow(w) {
+		if (!w) return;
+		let tries = 0;
+		const timer = window.setInterval(() => {
+			tries++;
+			try {
+				const sw = w.screen.availWidth;
+				const sh = w.screen.availHeight;
+				if (sw && sh && w.outerWidth && w.outerHeight) {
+					w.moveTo(
+						Math.max(0, Math.round((sw - w.outerWidth) / 2)),
+						Math.max(0, Math.round((sh - w.outerHeight) / 2))
+					);
+				}
+			}
+			catch (e) { /* 窗口还没就绪 */ }
+			if (tries > 20) window.clearInterval(timer);
+		}, 100);
+	}
+
 	function openProviderDialog(providerId) {
 		const url = "chrome://paperloom/content/provider.xhtml";
 		try {
-			window.openDialog(url, "paperloom-provider",
+			const w = window.openDialog(url, "paperloom-provider",
 				"chrome,centerscreen,resizable,width=680,height=700",
 				{ providerId: providerId || "", Zotero: Zotero, PaperLoom: PL });
+			centerWindow(w);
 		}
 		catch (e) {
 			setStatus("打开服务商窗口失败：" + e, "err");
