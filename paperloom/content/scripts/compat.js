@@ -92,6 +92,9 @@ PaperLoom.Compat = (function () {
 				const res = win.Zotero_Tabs.add({
 					type: type,
 					title: title,
+					// Zotero 10 的标签代码会读 tab.data.icon；不传 data 会在后续操作里抛
+					// "can't access property 'icon', tab.data is undefined"
+					data: {},
 					select: true,
 					onClose: onClose
 				});

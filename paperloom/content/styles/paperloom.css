@@ -697,3 +697,56 @@ body.pl-embed .pl-graph-layout {
 }
 
 body.pl-embed .pl-graph-help { display: none; }
+
+/* 模型选择器（details 面板，不依赖原生 select 弹层） */
+.pl-picker { position: relative; display: inline-block; }
+
+.pl-picker summary {
+	list-style: none;
+	cursor: pointer;
+	padding: 5px 10px;
+	border: 1px solid var(--pl-border);
+	border-radius: 6px;
+	background: var(--pl-bg);
+	min-width: 260px;
+	font-size: 12px;
+}
+
+.pl-picker summary::-webkit-details-marker { display: none; }
+.pl-picker summary::after { content: " ▾"; color: var(--pl-text-dim); }
+
+.pl-picker-list {
+	position: absolute;
+	z-index: 50;
+	margin-top: 4px;
+	min-width: 300px;
+	max-height: 280px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid var(--pl-border);
+	border-radius: 6px;
+	padding: 4px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.pl-picker-group {
+	font-size: 11px;
+	color: var(--pl-text-dim);
+	padding: 6px 8px 2px;
+}
+
+.pl-picker-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	border: 0;
+	background: transparent;
+	padding: 4px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	font: inherit;
+	font-size: 12px;
+}
+
+.pl-picker-item:hover { background: #f3f4f6; }
+.pl-picker-item.active { background: #e8f0fe; color: #2f6feb; }

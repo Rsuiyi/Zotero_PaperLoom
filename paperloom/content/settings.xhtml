@@ -91,14 +91,20 @@
 	<section>
 		<h2>模型选择</h2>
 		<div class="row">
-			<label for="chatModelSel">对话模型</label>
-			<select id="chatModelSel"></select>
+			<label>对话模型</label>
+			<details class="pl-picker" id="chatModelPicker">
+				<summary id="chatModelSummary">未选择</summary>
+				<div class="pl-picker-list" id="chatModelList"></div>
+			</details>
 		</div>
 		<div class="desc">回答问题时使用，建议选能力更强、上下文更长的模型。</div>
 
 		<div class="row">
-			<label for="extractModelSel">图谱抽取模型</label>
-			<select id="extractModelSel"></select>
+			<label>图谱抽取模型</label>
+			<details class="pl-picker" id="extractModelPicker">
+				<summary id="extractModelSummary">未选择</summary>
+				<div class="pl-picker-list" id="extractModelList"></div>
+			</details>
 		</div>
 		<div class="desc">建图谱、抽概念与记忆时使用，可以和对话模型来自不同服务商。</div>
 

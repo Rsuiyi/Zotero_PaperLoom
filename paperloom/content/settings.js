@@ -218,7 +218,7 @@
 		}
 
 		renderProviders();
-		renderModelSelects();
+		renderModelPickers();
 		setStatus("已删除服务商", "ok");
 	}
 
@@ -325,53 +325,62 @@
 
 	// ------------------------------------------------------------------ 模型下拉框
 
-	function fillModelSelect(sel, refKey) {
-		if (!sel || !PL) return;
+	/** 用 details 面板代替原生 select：chrome iframe 里原生下拉弹不出来 */
+	function fillModelPicker(pickerId, listId, summaryId, refKey) {
+		const picker = $(pickerId), list = $(listId), summary = $(summaryId);
+		if (!picker || !list) return;
 
 		const providers = PL.LLM.getProviders();
 		const current = String(prefGet(refKey, ""));
-		let found = false;
+		let currentLabel = "未选择";
 
-		sel.innerHTML = "";
+		list.innerHTML = "";
 
-		const ph = document.createElement("option");
-		ph.value = "";
-		ph.textContent = providers.length ? "请选择模型…" : "（还没有服务商，请先新增）";
-		sel.appendChild(ph);
+		if (!providers.length) {
+			const empty = document.createElement("div");
+			empty.className = "pl-muted";
+			empty.textContent = "还没有服务商，请先新增。";
+			list.appendChild(empty);
+		}
 
 		for (const p of providers) {
 			if (!p.models || !p.models.length) continue;
 
-			const group = document.createElement("optgroup");
-			group.label = p.name || p.baseURL;
+			const group = document.createElement("div");
+			group.className = "pl-picker-group";
+			group.textContent = p.name || p.baseURL;
+			list.appendChild(group);
 
 			for (const m of p.models) {
 				const ref = PL.LLM.makeRef(p.id, m);
-				const opt = document.createElement("option");
-				opt.value = ref;
-				opt.textContent = m;
-				if (ref === current) {
-					opt.selected = true;
-					found = true;
-				}
-				group.appendChild(opt);
+				const item = document.createElement("button");
+				item.type = "button";
+				item.className = "pl-picker-item" + (ref === current ? " active" : "");
+				item.textContent = m;
+				item.addEventListener("click", () => {
+					prefSet(refKey, ref);
+					picker.open = false;
+					fillModelPicker(pickerId, listId, summaryId, refKey);
+					setStatus("已选择模型：" + (p.name || p.baseURL) + " / " + m, "ok");
+				});
+				list.appendChild(item);
+				if (ref === current) currentLabel = (p.name || p.baseURL) + " · " + m;
 			}
-			sel.appendChild(group);
 		}
 
-		// 当前引用已失效（服务商被删/模型被改名）时保留一项提示，而不是悄悄清空
-		if (current && !found) {
-			const stale = document.createElement("option");
-			stale.value = current;
-			stale.textContent = "（已失效：需要重新选择）";
-			stale.selected = true;
-			sel.appendChild(stale);
+		if (current && currentLabel === "未选择") {
+			const stale = document.createElement("div");
+			stale.className = "pl-muted";
+			stale.textContent = "当前模型引用已失效，请重新选择。";
+			list.appendChild(stale);
 		}
+
+		if (summary) summary.textContent = currentLabel;
 	}
 
-	function renderModelSelects() {
-		fillModelSelect($("chatModelSel"), "chatModelRef");
-		fillModelSelect($("extractModelSel"), "extractModelRef");
+	function renderModelPickers() {
+		fillModelPicker("chatModelPicker", "chatModelList", "chatModelSummary", "chatModelRef");
+		fillModelPicker("extractModelPicker", "extractModelList", "extractModelSummary", "extractModelRef");
 	}
 
 	// ------------------------------------------------------------------ 测试
@@ -381,7 +390,7 @@
 			setStatus("领域层未加载", "err");
 			return;
 		}
-		const ref = $("chatModelSel").value;
+		const ref = String(prefGet("chatModelRef", ""));
 		const target = PL.LLM.resolveRef(ref);
 		if (!target) {
 			setStatus("请先选择「对话模型」", "err");
@@ -466,7 +475,7 @@
 
 		loadParams();
 		renderProviders();
-		renderModelSelects();
+		renderModelPickers();
 		bindEffortSeg();
 
 		$("btn-add-provider").addEventListener("click", () => openProviderDialog(""));
@@ -478,20 +487,12 @@
 		$("btn-save").addEventListener("click", saveParams);
 		if ($("btn-close")) $("btn-close").addEventListener("click", () => window.close());
 
-		$("chatModelSel").addEventListener("change", (ev) => {
-			prefSet("chatModelRef", ev.target.value);
-			setStatus(ev.target.value ? "对话模型已更新" : "已清空对话模型", "ok");
-		});
-		$("extractModelSel").addEventListener("change", (ev) => {
-			prefSet("extractModelRef", ev.target.value);
-			setStatus(ev.target.value ? "抽取模型已更新" : "已清空抽取模型", "ok");
-		});
 
 		// 服务商弹窗关闭后回到本窗口：重新渲染列表与下拉框
 		window.addEventListener("focus", () => {
 			try {
 				renderProviders();
-				renderModelSelects();
+				renderModelPickers();
 			}
 			catch (e) { /* ignore */ }
 		});
