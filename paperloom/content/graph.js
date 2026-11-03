@@ -360,15 +360,59 @@
 		return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };
 	}
 
-	/** chrome iframe 里 window.confirm 可能不可用：优先用主窗口的模态框 */
+	/**
+	 * 页内确认框。
+	 * 不用原生 confirm：它会弹系统模态框，还可能把图谱窗口压到后面。
+	 * @returns {Promise<boolean>}
+	 */
 	function confirmAction(text) {
-		try {
-			const win = Zotero.getMainWindow && Zotero.getMainWindow();
-			if (win && typeof win.confirm === "function") return win.confirm(text);
-		}
-		catch (e) { /* ignore */ }
-		try { return window.confirm(text); } catch (e) { /* ignore */ }
-		return true;
+		return new Promise((resolve) => {
+			try {
+				const overlay = document.createElement("div");
+				overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.35);"
+					+ "display:flex;align-items:center;justify-content:center;z-index:99999;";
+
+				const box = document.createElement("div");
+				box.style.cssText = "background:#fff;color:#1f2328;border-radius:10px;padding:16px 18px;"
+					+ "max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,0.25);font:13px/1.6 sans-serif;";
+
+				const msg = document.createElement("div");
+				msg.textContent = text;
+				msg.style.marginBottom = "14px";
+
+				const row = document.createElement("div");
+				row.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+
+				const cancel = document.createElement("button");
+				cancel.textContent = "取消";
+				cancel.style.cssText = "padding:5px 14px;border:1px solid #d1d5da;border-radius:6px;background:#fff;cursor:pointer;";
+
+				const ok = document.createElement("button");
+				ok.textContent = "删除";
+				ok.style.cssText = "padding:5px 14px;border:1px solid #cf222e;border-radius:6px;"
+					+ "background:#cf222e;color:#fff;cursor:pointer;";
+
+				const close = (value) => {
+					try { overlay.remove(); } catch (e) { /* ignore */ }
+					resolve(value);
+				};
+
+				cancel.addEventListener("click", () => close(false));
+				ok.addEventListener("click", () => close(true));
+				overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(false); });
+
+				row.appendChild(cancel);
+				row.appendChild(ok);
+				box.appendChild(msg);
+				box.appendChild(row);
+				overlay.appendChild(box);
+				(document.body || document.documentElement).appendChild(overlay);
+				ok.focus();
+			}
+			catch (e) {
+				resolve(true);   // 极端情况下不阻塞删除
+			}
+		});
 	}
 
 	function alertAction(text) {
@@ -504,6 +548,9 @@
 			const n = selection.size;
 			btn.textContent = n ? ("删除选中 (" + n + ")") : "删除选中";
 			btn.disabled = n === 0;
+
+			const info = $("pl-graph-selinfo");
+			if (info) info.textContent = n > 1 ? ("已选 " + n + " 个节点") : "";
 		}
 		catch (e) { /* ignore */ }
 	}
@@ -546,7 +593,8 @@
 				selected = node;
 				dragging = node;
 			}
-			showDetail(node);
+			if (selection.size > 1) showSelectionSummary();
+			else if (selection.size === 1) showDetail(node);
 			draw();
 			return;
 		}
@@ -606,10 +654,14 @@
 						selection.add(n.nodeId);
 					}
 				}
-				if (selection.size) {
-					const lastId = Array.from(selection)[selection.size - 1];
-					const last = view.nodes.find(n => n.nodeId === lastId);
-					if (last) { selected = last; showDetail(last); }
+				if (selection.size > 1) {
+					selected = null;
+					showSelectionSummary();
+				}
+				else if (selection.size === 1) {
+					const onlyId = Array.from(selection)[0];
+					const only = view.nodes.find(n => n.nodeId === onlyId);
+					if (only) { selected = only; showDetail(only); }
 				}
 			}
 			box = null;
@@ -623,7 +675,7 @@
 	/** Del / Backspace：删除所有选中的节点（先确认） */
 	async function deleteSelection() {
 		if (!selection.size) return;
-		if (!confirmAction("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。")) return;
+		if (!(await confirmAction("删除选中的 " + selection.size + " 个节点及其全部关联边？此操作不可撤销。"))) return;
 
 		try {
 			await PL.GraphStore.removeNodes(Array.from(selection));
@@ -668,7 +720,7 @@
 	}
 
 	async function deleteNodeAction(node) {
-		if (!confirmAction("删除概念「" + node.label + "」及其全部关联边？")) return;
+		if (!(await confirmAction("删除概念「" + node.label + "」及其全部关联边？"))) return;
 		try {
 			await PL.GraphStore.removeNode(node.nodeId);
 			$("pl-graph-detail").innerHTML = "";
@@ -696,6 +748,37 @@
 	}
 
 	// ------------------------------------------------------------ 证据卡片
+
+	/** 多选时右侧显示汇总，避免看起来"只选了一个" */
+	function showSelectionSummary() {
+		const box = $("pl-graph-detail");
+		box.innerHTML = "";
+		$("pl-graph-hint").style.display = "none";
+
+		const card = document.createElement("div");
+		card.className = "pl-evidence-card";
+
+		const h = document.createElement("h4");
+		h.textContent = "已选中 " + selection.size + " 个节点";
+		card.appendChild(h);
+
+		const tip = document.createElement("div");
+		tip.className = "pl-muted";
+		tip.textContent = "按 Delete 或点工具栏「删除选中」删除；Esc 取消选择。";
+		card.appendChild(tip);
+
+		const list = document.createElement("div");
+		list.className = "pl-muted";
+		list.style.marginTop = "6px";
+		list.textContent = view.nodes
+			.filter(n => selection.has(n.nodeId))
+			.map(n => n.label)
+			.slice(0, 40)
+			.join("、");
+		card.appendChild(list);
+
+		box.appendChild(card);
+	}
 
 	function showDetail(node) {
 		const box = $("pl-graph-detail");
@@ -789,7 +872,7 @@
 			const delEdge = document.createElement("button");
 			delEdge.textContent = "删除这条边";
 			delEdge.addEventListener("click", async () => {
-				if (!confirmAction("删除这条关联边？")) return;
+				if (!(await confirmAction("删除这条关联边？"))) return;
 				try {
 					await PL.GraphStore.removeEdge(e.edgeId);
 					await load();
