@@ -34,12 +34,13 @@ PaperLoom 把三件事做成一个闭环：
 
 可配置：API Base URL（OpenAI 兼容，填到 `/v1`）、API Key、对话模型、抽取模型、`max_tokens`、`temperature`、超时、结果缓存、数据目录。
 
-- **模型下拉框**：点「拉取模型列表」调用服务商 `GET /models`，拉到的模型直接在两个下拉框里选，也可以手动填写。
+- **模型下拉框**：打开设置即载入内置模型目录（DeepSeek / OpenAI / Claude），有 Key 时再合并服务商 `GET /models` 的返回；也可以手动填写。
 - **测试连接**：发一条 16 token 的 ping，确认接口、鉴权和模型名是否有效。
 - 配置只写入本机 Zotero 偏好（`extensions.paperloom.*`），不会上传。
 
 ## 对话面板
 
+- **顶部工具栏常驻按钮**：主窗口 `#zotero-items-toolbar` 里一直可见，点一下打开对话页（做法同 Zotero AI Sidebar）
 - 上方对话，下方是**记忆**与**图谱**两个实时面板，标签切换
 - 拖动中间的分隔条可调整下方面板高度（高度会记住）
 - 对话每完成一轮，记忆列表与图谱自动刷新

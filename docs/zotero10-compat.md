@@ -7,6 +7,15 @@
 `E:\科研工具\论文翻译器与插件\Zotero\app\omni.ja` 真实源码，不是猜的。
 换大版本时，按第 3 节清单回归一遍。
 
+## 0.1 两个借鉴自成熟插件的做法
+
+| 问题 | 别人怎么做 | 我们怎么做 |
+|---|---|---|
+| 模型列表 | Zotero AI Sidebar 内置每个供应商的 `MODEL_CATALOG`，不依赖网络 | 内置 DeepSeek/OpenAI/Claude 目录打底，`GET /models` 成功时增量合并 |
+| 常驻入口 | AI Sidebar 往 `#zotero-items-toolbar` 插入 `toolbarbutton`（flex spacer 之前） | 同样插 `#paperloom-toolbar-btn`，点击打开对话页；窗口卸载时移除 |
+
+> 结论：模型下拉框不能只依赖 `GET /models`——不少 OpenAI 兼容服务不实现该接口，或返回的 ID 与对话接口不一致。
+
 ## 0. 适配策略
 
 | 层 | 做法 |

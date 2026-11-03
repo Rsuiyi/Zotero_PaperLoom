@@ -137,24 +137,70 @@ PaperLoom.LLM = (function () {
 	}
 
 	/**
-	 * 拉取服务商可用模型列表（OpenAI 兼容的 GET /models）。
-	 * 各家未必都实现该接口，调用方必须能接受失败并允许手动填写。
+	 * 内置模型目录。
+	 *
+	 * 为什么需要它：GET /models 并不是所有 OpenAI 兼容服务都实现（有的返回空、
+	 * 有的 ID 与对话接口不一致）。主流插件的做法是内置一份供应商目录，
+	 * 再用接口结果做增量补充 —— 这里采用同样的策略。
+	 */
+	const MODEL_CATALOG = {
+		deepseek: ["deepseek-v4-pro", "deepseek-v4-flash"],
+		openai: [
+			"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+			"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"
+		],
+		claude: [
+			"claude-opus-4-7", "claude-opus-4-6",
+			"claude-sonnet-4-6", "claude-haiku-4-5-20251001"
+		]
+	};
+
+	/** 从 base URL 猜供应商；猜不出就返回空目录，让用户手动填 */
+	function detectProvider(baseURL) {
+		const u = String(baseURL || "").toLowerCase();
+		if (u.includes("deepseek")) return "deepseek";
+		if (u.includes("anthropic") || u.includes("claude")) return "claude";
+		if (u.includes("openai")) return "openai";
+		return "";
+	}
+
+	/** 当前 base URL 对应的内置模型（不联网，随叫随到） */
+	function modelSuggestions() {
+		return (MODEL_CATALOG[detectProvider(config().baseURL)] || []).slice();
+	}
+
+	/**
+	 * 拉取模型列表：内置目录打底，再尝试 GET /models 增量合并。
+	 * 没有 Key 或接口失败时返回内置目录而不是抛错 —— 下拉框永远有东西可选。
 	 */
 	async function listModels() {
 		const cfg = config();
-		if (!cfg.apiKey) {
-			throw new Error("尚未填写 API Key");
-		}
-		const data = await getJSON(cfg.baseURL + "/models", {
-			"Authorization": "Bearer " + cfg.apiKey
-		}, Math.min(cfg.timeoutMs, 30000));
+		const suggested = modelSuggestions();
 
-		const arr = (data && (data.data || data.models)) || [];
-		const ids = arr
-			.map(m => (typeof m === "string" ? m : (m && m.id)))
-			.filter(Boolean);
-		// 去重并稳定排序，避免每次刷新下拉框顺序都变
-		return Array.from(new Set(ids)).sort();
+		if (!cfg.apiKey) {
+			return suggested;
+		}
+
+		try {
+			const data = await getJSON(cfg.baseURL + "/models", {
+				"Authorization": "Bearer " + cfg.apiKey
+			}, Math.min(cfg.timeoutMs, 30000));
+
+			const arr = (data && (data.data || data.models)) || [];
+			const ids = arr
+				.map(m => (typeof m === "string" ? m : (m && m.id)))
+				.filter(Boolean);
+
+			// 内置目录在前（顺序稳定），接口新增的后置，整体去重
+			return Array.from(new Set(suggested.concat(ids)));
+		}
+		catch (e) {
+			if (suggested.length) {
+				log("GET /models 失败，使用内置目录: " + e);
+				return suggested;
+			}
+			throw e;
+		}
 	}
 
 	/**
@@ -303,5 +349,8 @@ PaperLoom.LLM = (function () {
 		return parsed;
 	}
 
-	return { complete, completeJSON, parseJSON, config, isConfigured, testConnection, listModels, postJSON };
+	return {
+		complete, completeJSON, parseJSON, config, isConfigured,
+		testConnection, listModels, modelSuggestions, detectProvider, postJSON
+	};
 })();

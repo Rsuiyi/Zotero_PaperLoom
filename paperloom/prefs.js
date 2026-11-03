@@ -5,9 +5,9 @@
 pref("extensions.paperloom.apiBase", "https://api.deepseek.com/v1");
 pref("extensions.paperloom.apiKey", "");
 // 对话用强模型
-pref("extensions.paperloom.chatModel", "deepseek-chat");
+pref("extensions.paperloom.chatModel", "deepseek-v4-pro");
 // 抽取 / 建图用便宜模型
-pref("extensions.paperloom.extractModel", "deepseek-chat");
+pref("extensions.paperloom.extractModel", "deepseek-v4-flash");
 // ⚠ 必须 ≥ 4096：DeepSeek 系推理模型的 reasoning token 计入 completion，
 //   给小了会出现 content 为空。
 pref("extensions.paperloom.maxTokens", 4096);

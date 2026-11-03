@@ -266,6 +266,8 @@ function addToWindow(win) {
 		return;
 	}
 
+	addToolbarButton(doc);
+
 	const menu = doc.createXULElement("menu");
 	menu.id = "paperloom-menu";
 	menu.setAttribute("label", "PaperLoom");
@@ -286,6 +288,46 @@ function addToWindow(win) {
 	host.appendChild(menu);
 }
 
+/**
+ * 常驻顶部工具栏按钮。
+ * 做法同 Zotero AI Sidebar：插进 #zotero-items-toolbar 的 flex spacer 之前，
+ * 这样它一直显示，不需要先展开条目侧栏。
+ */
+function addToolbarButton(doc) {
+	if (doc.getElementById("paperloom-toolbar-btn")) return;
+
+	// 首选条目列表工具栏（AI Sidebar 也挂这里）；不同版本布局不同，按顺序找可用的
+	const toolbar = doc.getElementById("zotero-items-toolbar")
+		|| doc.getElementById("zotero-toolbar-item-tree")
+		|| doc.getElementById("zotero-tabs-toolbar");
+	if (!toolbar) {
+		log("找不到主工具栏，顶部按钮未挂载");
+		return;
+	}
+
+	const btn = doc.createXULElement("toolbarbutton");
+	btn.id = "paperloom-toolbar-btn";
+	btn.setAttribute("class", "zotero-tb-button");
+	btn.setAttribute("tooltiptext", "PaperLoom 跨论文研究助手");
+
+	const icon = "chrome://paperloom/content/icons/paperloom.svg";
+	btn.setAttribute("image", icon);
+	btn.style.listStyleImage = 'url("' + icon + '")';
+
+	btn.addEventListener("command", () => {
+		try {
+			openTab(doc.defaultView, "chat");
+		}
+		catch (e) {
+			log("工具栏按钮打开面板失败: " + e);
+		}
+	});
+
+	// 放在弹性 spacer 之前，避免被挤到最右边
+	const spacer = toolbar.querySelector('spacer[flex="1"]');
+	toolbar.insertBefore(btn, spacer || null);
+}
+
 function makeMenuItem(doc, id, label, handler) {
 	const item = doc.createXULElement("menuitem");
 	item.id = id;
@@ -298,6 +340,8 @@ function removeFromWindow(win) {
 	if (!win || !win.document) return;
 	const menu = win.document.getElementById("paperloom-menu");
 	if (menu) menu.remove();
+	const btn = win.document.getElementById("paperloom-toolbar-btn");
+	if (btn) btn.remove();
 }
 
 const TAB_SPECS = {

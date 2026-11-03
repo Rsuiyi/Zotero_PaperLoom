@@ -149,8 +149,16 @@
 			const extract = $("extractModel").value;
 			fillSelect($("chatModelSel"), models || [], chat);
 			fillSelect($("extractModelSel"), models || [], extract);
+
 			if (!silent) {
-				setStatus(models && models.length ? "已获取 " + models.length + " 个模型" : "接口没有返回模型", models && models.length ? "ok" : "err");
+				const hasKey = !!readPref("apiKey", "string");
+				if (!models || !models.length) {
+					setStatus("没有取到模型，请手动填写模型名", "err");
+				}
+				else {
+					setStatus("已载入 " + models.length + " 个模型"
+						+ (hasKey ? "（内置目录 + 接口返回）" : "（内置目录；填 Key 后会合并接口列表）"), "ok");
+				}
 			}
 		}
 		catch (e) {
@@ -213,10 +221,8 @@
 		bindSelect("chatModelSel", "chatModel");
 		bindSelect("extractModelSel", "extractModel");
 
-		// 已经有 Key 时静默拉一次模型列表，省掉一次点击；失败不影响使用
-		if (readPref("apiKey", "string")) {
-			pullModels(true);
-		}
+		// 打开就载入模型目录（不联网也有内容）；有 Key 时会自动合并接口列表
+		pullModels(true);
 	}
 
 	if (document.readyState === "loading") {
