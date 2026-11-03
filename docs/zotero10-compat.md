@@ -39,6 +39,19 @@
 - `Zotero_Tabs.add()` 在 10 里签名未变（`{id,type,data,title,index,select,onClose}` → `{id, container}`），但它仍是私有 API，保留独立窗口兜底。
 - `item.getBestAttachment()` 仍然存在（`xpcom/data/item.js`），无需改为复数版本。
 
+### 设置面板为什么改成「按钮 + 独立窗口」
+
+原生面板由 `preferences/preferences.js` 用 `parseXULToFragment()` 解析，这意味着：
+
+- `src` 必须是 **XUL fragment**：不能带 `<?xml?>` 声明，不能自己套 `<vbox>` 根节点；
+- 面板里的 `<html:input preference="...">` 会把 `elem.value` 原样交给 `Zotero.Prefs.set()`，
+  而 `maxTokens` / `timeoutMs` 在 `prefs.js` 里是 **int 型偏好**，写入字符串会直接抛类型错误；
+- `scripts` 选项加载的脚本**先于** DOM 插入执行，必须轮询等元素出现。
+
+结论：原生面板只保留一个「打开设置」按钮，所有输入框放在
+`chrome://paperloom/content/settings.xhtml` 的独立窗口里（`工具 → PaperLoom → 设置…` 也可直达）。
+这样设置入口不依赖任何版本的偏好面板实现，同时保留了在 Zotero 设置里的可见性。
+
 ---
 
 ## 3. 换大版本时的回归清单

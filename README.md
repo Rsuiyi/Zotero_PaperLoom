@@ -25,6 +25,18 @@ PaperLoom 把三件事做成一个闭环：
 - 数据全部本地存储，仅将选中的上下文发往所配置的 LLM 接口
 - 兼容性结论与回归清单见 [docs/zotero10-compat.md](docs/zotero10-compat.md)
 
+## 配置大模型
+
+两种入口，效果相同：
+
+- **工具 → PaperLoom → 设置…**（不依赖 Zotero 设置面板，任何版本都能用）
+- Zotero 设置 → PaperLoom → 点「打开 PaperLoom 设置」
+
+可配置：API Base URL（OpenAI 兼容，填到 `/v1`）、API Key、对话模型、抽取模型、`max_tokens`、`temperature`、超时、结果缓存、数据目录。
+窗口里的「测试连接」会发一条 16 token 的 ping，用来确认接口地址、鉴权和模型名是否有效。
+
+配置只写入本机 Zotero 偏好（`extensions.paperloom.*`），不会上传。
+
 ## 文档
 
 - [计划书.md](计划书.md) —— 完整方案：架构、数据契约、记忆系统、分工、里程碑、风险与 Demo 剧本

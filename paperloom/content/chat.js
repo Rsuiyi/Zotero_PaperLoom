@@ -50,6 +50,7 @@
 		$("pl-btn-clear").addEventListener("click", () => { els.messages.innerHTML = ""; });
 		$("pl-btn-graph").addEventListener("click", () => openPanel("graph"));
 		$("pl-btn-memory").addEventListener("click", () => openPanel("memory"));
+		$("pl-btn-settings").addEventListener("click", () => openPanel("settings"));
 
 		window.addEventListener("message", (ev) => {
 			const msg = ev.data;

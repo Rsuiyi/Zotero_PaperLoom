@@ -148,6 +148,9 @@ async function registerPreferencePane() {
 	const base = {
 		pluginID: PLUGIN_ID,
 		src: "content/preferences.xhtml",
+		// 面板里只放一个"打开设置"按钮；输入框全部集中在独立窗口，
+		// 避免各版本对 preference 属性类型处理不一致
+		scripts: ["content/preferences.js"],
 		label: "PaperLoom"
 	};
 
@@ -277,6 +280,8 @@ function addToWindow(win) {
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-memory", "打开记忆卡片", () => openTab(win, "memory")));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-chat", "打开全库对话", () => openTab(win, "chat")));
 	popup.appendChild(doc.createXULElement("menuseparator"));
+	// 独立设置窗口：不依赖 Zotero 原生设置面板，任何版本都能配模型与 Key
+	popup.appendChild(makeMenuItem(doc, "paperloom-menu-settings", "设置…", () => openSettings(win)));
 	popup.appendChild(makeMenuItem(doc, "paperloom-menu-rebuild", "重建所选论文的图谱", () => rebuildSelected(win)));
 
 	host.appendChild(menu);
@@ -301,8 +306,23 @@ const TAB_SPECS = {
 	itemchat: { title: "PaperLoom 对话", src: "chrome://paperloom/content/chat.xhtml?mode=item" },
 	graph: { title: "PaperLoom 图谱", src: "chrome://paperloom/content/graph.xhtml" },
 	memory: { title: "PaperLoom 记忆", src: "chrome://paperloom/content/memory.xhtml" },
-	chat: { title: "PaperLoom 全库对话", src: "chrome://paperloom/content/chat.xhtml?mode=library" }
+	chat: { title: "PaperLoom 全库对话", src: "chrome://paperloom/content/chat.xhtml?mode=library" },
+	settings: { title: "PaperLoom 设置", src: "chrome://paperloom/content/settings.xhtml" }
 };
+
+/** 独立设置窗口：openDialog 失败时退回 Tab，保证配置入口永远存在 */
+function openSettings(win) {
+	const url = "chrome://paperloom/content/settings.xhtml";
+	try {
+		win.openDialog(url, "paperloom-settings",
+			"chrome,centerscreen,resizable,width=700,height=720",
+			{ Zotero: Zotero, PaperLoom: PaperLoom });
+	}
+	catch (e) {
+		log("独立设置窗口打开失败，退回 Tab: " + e);
+		openTab(win, "settings");
+	}
+}
 
 const openTabIDs = Object.create(null);
 

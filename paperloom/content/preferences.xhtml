@@ -1,73 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?>
-<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-      xmlns:html="http://www.w3.org/1999/xhtml">
+<groupbox>
+	<label><html:h2>PaperLoom</html:h2></label>
+	<description>大模型接口、模型名、API Key、max_tokens 等都在独立设置窗口中配置。</description>
+	<description>集中到独立窗口只有一份实现，避免不同 Zotero 版本对偏好类型处理不一致。</description>
 
-	<groupbox>
-		<label><html:h2>LLM 接口（OpenAI 兼容）</html:h2></label>
+	<hbox align="center" style="margin-top: 10px;">
+		<button id="paperloom-open-settings" label="打开 PaperLoom 设置" />
+	</hbox>
 
-		<hbox align="center">
-			<label value="API Base URL" width="140" />
-			<html:input type="text" style="flex:1"
-			            preference="extensions.paperloom.apiBase"
-			            placeholder="https://api.deepseek.com/v1" />
-		</hbox>
-
-		<hbox align="center">
-			<label value="API Key" width="140" />
-			<html:input type="password" style="flex:1"
-			            preference="extensions.paperloom.apiKey" />
-		</hbox>
-
-		<hbox align="center">
-			<label value="对话模型（强）" width="140" />
-			<html:input type="text" style="flex:1"
-			            preference="extensions.paperloom.chatModel"
-			            placeholder="deepseek-chat" />
-		</hbox>
-
-		<hbox align="center">
-			<label value="抽取模型（便宜）" width="140" />
-			<html:input type="text" style="flex:1"
-			            preference="extensions.paperloom.extractModel"
-			            placeholder="deepseek-chat" />
-		</hbox>
-
-		<hbox align="center">
-			<label value="max_tokens" width="140" />
-			<html:input type="number" min="4096" step="1024" style="width:120px"
-			            preference="extensions.paperloom.maxTokens" />
-			<description style="margin-inline-start:8px; opacity:0.75">
-				必须 ≥ 4096。推理模型的 reasoning token 计入 completion，给小了会出现 content 为空。
-			</description>
-		</hbox>
-
-		<hbox align="center">
-			<label value="temperature" width="140" />
-			<html:input type="text" style="width:80px"
-			            preference="extensions.paperloom.temperature" />
-		</hbox>
-
-		<hbox align="center">
-			<label value="超时（毫秒）" width="140" />
-			<html:input type="number" min="5000" step="5000" style="width:120px"
-			            preference="extensions.paperloom.timeoutMs" />
-		</hbox>
-
-		<checkbox label="缓存 LLM 结果到本地（按 hash(prompt)，开发期反复调试不烧钱）"
-		          preference="extensions.paperloom.useCache" />
-	</groupbox>
-
-	<groupbox>
-		<label><html:h2>存储</html:h2></label>
-		<hbox align="center">
-			<label value="数据目录" width="140" />
-			<html:input type="text" style="flex:1"
-			            preference="extensions.paperloom.dataDir"
-			            placeholder="留空 = &lt;Zotero 数据目录&gt;/paperloom" />
-		</hbox>
-		<description style="opacity:0.75">
-			图谱、记忆、对话记录与 LLM 缓存都以 JSON 落在本地，不做云同步。
-		</description>
-	</groupbox>
-
-</vbox>
+	<description id="paperloom-pref-status">正在读取配置状态…</description>
+</groupbox>

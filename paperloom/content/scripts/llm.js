@@ -46,6 +46,91 @@ PaperLoom.LLM = (function () {
 	}
 
 	/**
+	 * 统一的 POST JSON 传输层。
+	 * 按能力选路径，不判断版本：fetch（7–10 主窗口都有）→ Zotero.HTTP（免 CORS 兜底）。
+	 * @returns {Promise<Object>} 已解析的响应体
+	 */
+	async function postJSON(url, headers, payload, timeoutMs) {
+		if (typeof fetch === "function" && typeof AbortController === "function") {
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), timeoutMs);
+			let resp;
+			try {
+				resp = await fetch(url, {
+					method: "POST",
+					headers: headers,
+					body: JSON.stringify(payload),
+					signal: controller.signal
+				});
+			}
+			finally {
+				clearTimeout(timer);
+			}
+
+			const text = await resp.text().catch(() => "");
+			if (!resp.ok) {
+				throw new Error("LLM HTTP " + resp.status + ": " + text.slice(0, 500));
+			}
+			try {
+				return text ? JSON.parse(text) : null;
+			}
+			catch (e) {
+				throw new Error("LLM 返回的不是 JSON：" + text.slice(0, 200));
+			}
+		}
+
+		if (Zotero.HTTP && Zotero.HTTP.request) {
+			const xhr = await Zotero.HTTP.request("POST", url, {
+				headers: headers,
+				body: JSON.stringify(payload),
+				responseType: "json",
+				timeout: timeoutMs,
+				successCodes: false
+			});
+			if (xhr.status < 200 || xhr.status >= 300) {
+				throw new Error("LLM HTTP " + xhr.status);
+			}
+			return xhr.response;
+		}
+
+		throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
+	}
+
+	/**
+	 * 连通性自检：只验证「接口通、鉴权对、模型名有效」，不关心模型说什么。
+	 * 故意用 max_tokens=16，避免为一次测试烧掉一整轮对话的额度。
+	 */
+	async function testConnection() {
+		const cfg = config();
+		if (!cfg.apiKey) {
+			return { ok: false, error: "尚未填写 API Key" };
+		}
+		const started = Date.now();
+		try {
+			const data = await postJSON(cfg.baseURL + "/chat/completions", {
+				"Content-Type": "application/json",
+				"Authorization": "Bearer " + cfg.apiKey
+			}, {
+				model: cfg.chatModel,
+				messages: [{ role: "user", content: "ping" }],
+				max_tokens: 16,
+				stream: false
+			}, Math.min(cfg.timeoutMs, 30000));
+
+			const finish = data && data.choices && data.choices[0] && data.choices[0].finish_reason;
+			return {
+				ok: true,
+				ms: Date.now() - started,
+				model: (data && data.model) || cfg.chatModel,
+				finish: finish || ""
+			};
+		}
+		catch (e) {
+			return { ok: false, ms: Date.now() - started, error: String((e && e.message) || e) };
+		}
+	}
+
+	/**
 	 * 统一补全入口。
 	 * @param {Object} opts
 	 *   messages  [{role, content}]
@@ -90,53 +175,15 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		const url = cfg.baseURL + "/chat/completions";
-		const headers = {
-			"Content-Type": "application/json",
-			"Authorization": "Bearer " + cfg.apiKey
-		};
-
-		let data;
-		if (typeof fetch === "function" && typeof AbortController === "function") {
-			// 首选路径：各版本主窗口都有 fetch
-			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-			let resp;
-			try {
-				resp = await fetch(url, {
-					method: "POST",
-					headers: headers,
-					body: JSON.stringify(payload),
-					signal: controller.signal
-				});
-			}
-			finally {
-				clearTimeout(timer);
-			}
-
-			if (!resp.ok) {
-				const body = await resp.text().catch(() => "");
-				throw new Error("LLM HTTP " + resp.status + ": " + body.slice(0, 500));
-			}
-			data = await resp.json();
-		}
-		else if (Zotero.HTTP && Zotero.HTTP.request) {
-			// 兜底路径：沙箱拿不到 fetch 时走 Zotero 自带的 HTTP 封装（免 CORS）
-			const xhr = await Zotero.HTTP.request("POST", url, {
-				headers: headers,
-				body: JSON.stringify(payload),
-				responseType: "json",
-				timeout: cfg.timeoutMs,
-				successCodes: false
-			});
-			data = xhr.response;
-			if (xhr.status < 200 || xhr.status >= 300) {
-				throw new Error("LLM HTTP " + xhr.status);
-			}
-		}
-		else {
-			throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
-		}
+		const data = await postJSON(
+			cfg.baseURL + "/chat/completions",
+			{
+				"Content-Type": "application/json",
+				"Authorization": "Bearer " + cfg.apiKey
+			},
+			payload,
+			cfg.timeoutMs
+		);
 
 		const choice = data && data.choices && data.choices[0];
 		let content = choice && choice.message && choice.message.content;
@@ -195,5 +242,5 @@ PaperLoom.LLM = (function () {
 		return parsed;
 	}
 
-	return { complete, completeJSON, parseJSON, config, isConfigured };
+	return { complete, completeJSON, parseJSON, config, isConfigured, testConnection, postJSON };
 })();
