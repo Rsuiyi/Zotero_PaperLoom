@@ -11,10 +11,13 @@
 
 | 问题 | 别人怎么做 | 我们怎么做 |
 |---|---|---|
-| 模型列表 | Zotero AI Sidebar 内置每个供应商的 `MODEL_CATALOG`，不依赖网络 | 内置 DeepSeek/OpenAI/Claude 目录打底，`GET /models` 成功时增量合并 |
+| 模型列表 | AI Sidebar 内置供应商 `MODEL_CATALOG`；PDF2zh 点按钮实拉，且 **DeepSeek 用 `https://api.deepseek.com/models`（不带 `/v1`）** | 内置目录打底 + 按 provider 依次尝试 `/models` 候选地址，结果合并 |
+| 请求通道 | PDF2zh 优先 `Zotero.HTTP.request`，失败才 `fetch` | 同样 HTTP 优先，fetch 兜底 |
+| 响应解析 | PDF2zh 兼容 `data` / `models` / `result` / 纯数组，并去掉 Gemini 的 `models/` 前缀 | 同一套 `extractModelIds()` |
 | 常驻入口 | AI Sidebar 往 `#zotero-items-toolbar` 插入 `toolbarbutton`（flex spacer 之前） | 同样插 `#paperloom-toolbar-btn`，点击打开对话页；窗口卸载时移除 |
 
-> 结论：模型下拉框不能只依赖 `GET /models`——不少 OpenAI 兼容服务不实现该接口，或返回的 ID 与对话接口不一致。
+> 结论一：DeepSeek 的 `/v1/models` 不可用，必须走 `https://api.deepseek.com/models`。
+> 结论二：模型下拉框不能只依赖网络接口，内置目录要打底，接口失败时才不会变成空列表。
 
 ## 0. 适配策略
 

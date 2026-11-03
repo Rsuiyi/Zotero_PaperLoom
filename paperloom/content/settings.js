@@ -151,13 +151,22 @@
 			fillSelect($("extractModelSel"), models || [], extract);
 
 			if (!silent) {
-				const hasKey = !!readPref("apiKey", "string");
+				// models.source 由 llm.listModels 标记：api / api-empty / catalog / catalog-error
+				const src = models && models.source;
 				if (!models || !models.length) {
 					setStatus("没有取到模型，请手动填写模型名", "err");
 				}
+				else if (src === "api") {
+					setStatus("已从接口获取 " + models.length + " 个模型（含内置目录）", "ok");
+				}
+				else if (src === "api-empty") {
+					setStatus("接口没有返回模型，已用内置目录（" + models.length + " 个）", "ok");
+				}
+				else if (src === "catalog-error") {
+					setStatus("接口请求失败，已退回内置目录（" + models.length + " 个）", "err");
+				}
 				else {
-					setStatus("已载入 " + models.length + " 个模型"
-						+ (hasKey ? "（内置目录 + 接口返回）" : "（内置目录；填 Key 后会合并接口列表）"), "ok");
+					setStatus("已载入内置目录（" + models.length + " 个）；填 Key 后可拉接口列表", "ok");
 				}
 			}
 		}

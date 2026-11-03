@@ -47,24 +47,47 @@ PaperLoom.LLM = (function () {
 
 	/**
 	 * 统一的 POST JSON 传输层。
-	 * 按能力选路径，不判断版本：fetch（7–10 主窗口都有）→ Zotero.HTTP（免 CORS 兜底）。
+	 * 按能力选路径，不判断版本：Zotero.HTTP（特权通道，优先）→ fetch（兜底）。
 	 * @returns {Promise<Object>} 已解析的响应体
 	 */
 	async function postJSON(url, headers, payload, timeoutMs) {
-		if (typeof fetch === "function" && typeof AbortController === "function") {
-			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const body = JSON.stringify(payload);
+
+		// 优先 Zotero.HTTP：特权通道，不受 CORS 与插件沙箱 fetch 能力影响。
+		// PDF2zh / AI Sidebar 的请求都走这条路，实测比裸 fetch 稳。
+		if (Zotero.HTTP && Zotero.HTTP.request) {
+			const xhr = await Zotero.HTTP.request("POST", url, {
+				headers: headers,
+				body: body,
+				responseType: "json",
+				timeout: timeoutMs,
+				successCodes: false
+			});
+			if (xhr.status < 200 || xhr.status >= 300) {
+				const text = String(xhr.responseText || "").slice(0, 500);
+				throw new Error("LLM HTTP " + xhr.status + (text ? ": " + text : ""));
+			}
+			if (xhr.response && typeof xhr.response === "object") {
+				return xhr.response;
+			}
+			const raw = xhr.responseText || xhr.response || "";
+			return (typeof raw === "string" && raw) ? JSON.parse(raw) : null;
+		}
+
+		if (typeof fetch === "function") {
+			const init = { method: "POST", headers: headers, body: body };
+			let timer = null;
+			if (typeof AbortController === "function") {
+				const controller = new AbortController();
+				init.signal = controller.signal;
+				timer = setTimeout(() => controller.abort(), timeoutMs);
+			}
 			let resp;
 			try {
-				resp = await fetch(url, {
-					method: "POST",
-					headers: headers,
-					body: JSON.stringify(payload),
-					signal: controller.signal
-				});
+				resp = await fetch(url, init);
 			}
 			finally {
-				clearTimeout(timer);
+				if (timer) clearTimeout(timer);
 			}
 
 			const text = await resp.text().catch(() => "");
@@ -79,25 +102,29 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		if (Zotero.HTTP && Zotero.HTTP.request) {
-			const xhr = await Zotero.HTTP.request("POST", url, {
-				headers: headers,
-				body: JSON.stringify(payload),
-				responseType: "json",
-				timeout: timeoutMs,
-				successCodes: false
-			});
-			if (xhr.status < 200 || xhr.status >= 300) {
-				throw new Error("LLM HTTP " + xhr.status);
-			}
-			return xhr.response;
-		}
-
 		throw new Error("当前运行环境既没有 fetch 也没有 Zotero.HTTP，无法请求 LLM");
 	}
 
-	/** 统一的 GET JSON（目前只用于拉模型列表），传输层与 postJSON 一致 */
+	/** 统一的 GET JSON（目前只用于拉模型列表） */
 	async function getJSON(url, headers, timeoutMs) {
+		// 优先 Zotero.HTTP：特权通道，不受 CORS 与沙箱 fetch 能力影响。
+		// 这是 PDF2zh / AI Sidebar 都在用的路径，实测比 fetch 稳。
+		if (Zotero.HTTP && Zotero.HTTP.request) {
+			const xhr = await Zotero.HTTP.request("GET", url, {
+				headers: headers,
+				responseType: "json",
+				timeout: timeoutMs
+			});
+			if (xhr.status < 200 || xhr.status >= 300) {
+				throw new Error("HTTP " + xhr.status);
+			}
+			if (xhr.response && typeof xhr.response === "object") {
+				return xhr.response;
+			}
+			const raw = xhr.responseText || xhr.response || "";
+			return typeof raw === "string" ? JSON.parse(raw) : raw;
+		}
+
 		if (typeof fetch === "function" && typeof AbortController === "function") {
 			const controller = new AbortController();
 			const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -118,19 +145,6 @@ PaperLoom.LLM = (function () {
 			catch (e) {
 				throw new Error("返回的不是 JSON：" + text.slice(0, 200));
 			}
-		}
-
-		if (Zotero.HTTP && Zotero.HTTP.request) {
-			const xhr = await Zotero.HTTP.request("GET", url, {
-				headers: headers,
-				responseType: "json",
-				timeout: timeoutMs,
-				successCodes: false
-			});
-			if (xhr.status < 200 || xhr.status >= 300) {
-				throw new Error("HTTP " + xhr.status);
-			}
-			return xhr.response;
 		}
 
 		throw new Error("当前运行环境无法发起 HTTP 请求");
@@ -169,38 +183,105 @@ PaperLoom.LLM = (function () {
 		return (MODEL_CATALOG[detectProvider(config().baseURL)] || []).slice();
 	}
 
+	/** base URL 归一化：去掉尾部斜杠 */
+	function normalizeBaseURL(value) {
+		return String(value || "").trim().replace(/\/+$/, "");
+	}
+
 	/**
-	 * 拉取模型列表：内置目录打底，再尝试 GET /models 增量合并。
+	 * 模型列表端点候选（按顺序尝试）。
+	 *
+	 * PDF2zh 的实现说明了一件事：DeepSeek 的模型列表在
+	 * https://api.deepseek.com/models —— **不带 /v1**。
+	 * 所以这里先试这个，再退回通用的 {base}/models 与去掉 /v1 的写法，
+	 * 兼容官方地址和第三方代理。
+	 */
+	function modelURLs(baseURL) {
+		const base = normalizeBaseURL(baseURL);
+		const provider = detectProvider(base);
+		const urls = [];
+
+		if (provider === "deepseek") {
+			urls.push("https://api.deepseek.com/models");
+		}
+		if (base) {
+			urls.push(base.endsWith("/models") ? base : base + "/models");
+			if (/\/v1$/i.test(base)) {
+				urls.push(base.replace(/\/v1$/i, "") + "/models");
+			}
+		}
+		return Array.from(new Set(urls));
+	}
+
+	/** 从各家五花八门的返回里抠出模型 id（data / models / result / 纯数组） */
+	function extractModelIds(payload) {
+		let list = [];
+		if (Array.isArray(payload)) list = payload;
+		else if (payload && Array.isArray(payload.data)) list = payload.data;
+		else if (payload && Array.isArray(payload.models)) list = payload.models;
+		else if (payload && payload.result && Array.isArray(payload.result.data)) list = payload.result.data;
+		else if (payload && Array.isArray(payload.result)) list = payload.result;
+
+		const ids = list
+			.map((item) => {
+				if (typeof item === "string") return item;
+				return (item && (item.id || item.name || item.model || item.model_name)) || "";
+			})
+			.map((value) => {
+				const s = String(value);
+				// Gemini 风格会带 models/ 前缀，去掉才能直接用于对话
+				return s.startsWith("models/") ? s.slice("models/".length) : s;
+			})
+			.filter(Boolean);
+
+		return Array.from(new Set(ids));
+	}
+
+	/**
+	 * 拉取模型列表：内置目录打底，再尝试服务商的模型接口增量合并。
 	 * 没有 Key 或接口失败时返回内置目录而不是抛错 —— 下拉框永远有东西可选。
 	 */
+	/** 给返回数组挂一个 source 标记，UI 能区分"真的拉到了"还是"只是内置目录" */
+	function tagged(list, source) {
+		list.source = source;
+		return list;
+	}
+
 	async function listModels() {
 		const cfg = config();
 		const suggested = modelSuggestions();
 
 		if (!cfg.apiKey) {
-			return suggested;
+			return tagged(suggested, "catalog");
 		}
 
-		try {
-			const data = await getJSON(cfg.baseURL + "/models", {
-				"Authorization": "Bearer " + cfg.apiKey
-			}, Math.min(cfg.timeoutMs, 30000));
+		const urls = modelURLs(cfg.baseURL);
+		if (!urls.length) return tagged(suggested, "catalog");
 
-			const arr = (data && (data.data || data.models)) || [];
-			const ids = arr
-				.map(m => (typeof m === "string" ? m : (m && m.id)))
-				.filter(Boolean);
+		let lastError = null;
+		for (const url of urls) {
+			try {
+				const data = await getJSON(url, {
+					"Authorization": "Bearer " + cfg.apiKey
+				}, Math.min(cfg.timeoutMs, 20000));
 
-			// 内置目录在前（顺序稳定），接口新增的后置，整体去重
-			return Array.from(new Set(suggested.concat(ids)));
-		}
-		catch (e) {
-			if (suggested.length) {
-				log("GET /models 失败，使用内置目录: " + e);
-				return suggested;
+				const ids = extractModelIds(data);
+				if (!ids.length) {
+					lastError = new Error(url + " 返回成功但没有模型列表");
+					continue;
+				}
+
+				// 内置目录在前（顺序稳定），接口返回的后置，整体去重
+				return tagged(Array.from(new Set(suggested.concat(ids))), "api");
 			}
-			throw e;
+			catch (e) {
+				lastError = e;
+				log("模型列表请求失败（" + url + "）：" + e);
+			}
 		}
+
+		if (suggested.length) return tagged(suggested, "catalog-error");
+		throw lastError || new Error("模型列表接口不可用");
 	}
 
 	/**
