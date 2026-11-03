@@ -96,6 +96,7 @@ textarea {
 
 .pl-messages {
 	flex: 1;
+	min-height: 0;   /* flex 子项默认 min-height:auto，会让消息区撑破容器 */
 	overflow-y: auto;
 	padding: 8px;
 }
