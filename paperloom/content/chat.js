@@ -9,11 +9,43 @@
 (function () {
 	"use strict";
 
-	const Zotero = window.Zotero
-		|| (window.top && window.top.Zotero)
-		|| (window.parent && window.parent.Zotero);
+	// 领域层可能比 iframe 晚就绪：Zotero 启动时会恢复上次的标签页，
+	// 恢复的 iframe 可能早于插件 startup 完成。所以这两个是可变引用，拿到后要能刷新。
+	let Zotero = resolveZotero();
+	let PL = Zotero && Zotero.PaperLoom;
 
-	const PL = Zotero && Zotero.PaperLoom;
+	function resolveZotero() {
+		const tries = [
+			() => window.Zotero,
+			() => (window.top && window.top.Zotero),
+			() => (window.parent && window.parent.Zotero),
+			() => (window.opener && window.opener.Zotero)
+		];
+		for (const get of tries) {
+			try {
+				const z = get();
+				if (z) return z;
+			}
+			catch (e) { /* 跨域时继续试下一条 */ }
+		}
+		return null;
+	}
+
+	function sleep(ms) {
+		return new Promise(resolve => setTimeout(resolve, ms));
+	}
+
+	/** 最多等 maxMs，期间每 200ms 重新解析一次 Zotero 与 PaperLoom */
+	async function waitForDomainLayer(maxMs) {
+		const deadline = Date.now() + (maxMs || 20000);
+		while (Date.now() < deadline) {
+			Zotero = resolveZotero();
+			PL = Zotero && Zotero.PaperLoom;
+			if (PL) return true;
+			await sleep(200);
+		}
+		return false;
+	}
 
 	const mode = new URLSearchParams(location.search).get("mode") || "item";
 
@@ -27,7 +59,7 @@
 	if (document.readyState !== "loading") init();
 
 	let inited = false;
-	function init() {
+	async function init() {
 		if (inited) return;
 		inited = true;
 
@@ -44,9 +76,17 @@
 		els.graphFrame = $("pl-graph-frame");
 		els.dockHint = $("pl-dock-hint");
 
+		// 先等一会儿：刚启动就开始恢复的标签页会早于插件初始化
 		if (!PL) {
-			showError("PaperLoom 领域层未加载（Zotero.PaperLoom 不可用），请重启 Zotero。");
-			return;
+			showError("PaperLoom 正在加载…");
+			const ready = await waitForDomainLayer(20000);
+			if (!ready) {
+				showError("PaperLoom 领域层尚未就绪（Zotero.PaperLoom 不可用）。"
+					+ "请关闭本页后再点一次工具栏按钮；如果仍然如此，再重启 Zotero。");
+				return;
+			}
+			// 清掉"正在加载"的提示
+			els.messages.innerHTML = "";
 		}
 
 		els.send.addEventListener("click", onSend);

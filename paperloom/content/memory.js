@@ -8,10 +8,37 @@
 (function () {
 	"use strict";
 
-	const Zotero = window.Zotero
-		|| (window.top && window.top.Zotero)
-		|| (window.parent && window.parent.Zotero);
-	const PL = Zotero && Zotero.PaperLoom;
+	// 同 chat.js：标签页可能在插件启动前被恢复，领域层允许稍后才就绪
+	let Zotero = resolveZotero();
+	let PL = Zotero && Zotero.PaperLoom;
+
+	function resolveZotero() {
+		const tries = [
+			() => window.Zotero,
+			() => (window.top && window.top.Zotero),
+			() => (window.parent && window.parent.Zotero),
+			() => (window.opener && window.opener.Zotero)
+		];
+		for (const get of tries) {
+			try {
+				const z = get();
+				if (z) return z;
+			}
+			catch (e) { /* 跨域时继续试下一条 */ }
+		}
+		return null;
+	}
+
+	async function waitForDomainLayer(maxMs) {
+		const deadline = Date.now() + (maxMs || 20000);
+		while (Date.now() < deadline) {
+			Zotero = resolveZotero();
+			PL = Zotero && Zotero.PaperLoom;
+			if (PL) return true;
+			await new Promise(r => setTimeout(r, 200));
+		}
+		return false;
+	}
 
 	const $ = (id) => document.getElementById(id);
 
@@ -19,14 +46,19 @@
 	if (document.readyState !== "loading") init();
 
 	let inited = false;
-	function init() {
+	async function init() {
 		if (inited) return;
 		inited = true;
 
 		if (!PL) {
 			$("pl-mem-empty").style.display = "block";
-			$("pl-mem-empty").textContent = "PaperLoom 领域层未加载，请重启 Zotero。";
-			return;
+			$("pl-mem-empty").textContent = "PaperLoom 正在加载…";
+			const ready = await waitForDomainLayer(20000);
+			if (!ready) {
+				$("pl-mem-empty").textContent = "PaperLoom 领域层尚未就绪，请关闭本页后重新打开。";
+				return;
+			}
+			$("pl-mem-empty").textContent = "";
 		}
 
 		$("pl-mem-refresh").addEventListener("click", render);
