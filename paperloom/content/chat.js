@@ -93,6 +93,7 @@
 		$("pl-btn-settings").addEventListener("click", () => openPanel("settings"));
 		$("pl-btn-font-down").addEventListener("click", () => applyFont(currentFont() - 1));
 		$("pl-btn-font-up").addEventListener("click", () => applyFont(currentFont() + 1));
+		initEffort();
 
 		window.addEventListener("message", (ev) => {
 			const msg = ev.data;
@@ -452,6 +453,26 @@
 		}
 		catch (e) { /* ignore */ }
 		return 13;
+	}
+
+	// ------------------------------------------------------------ 推理强度
+
+	const EFFORT_PREF = "extensions.paperloom.reasoningEffort";
+
+	function initEffort() {
+		const sel = $("pl-effort");
+		if (!sel) return;
+
+		try {
+			sel.value = String(Zotero.Prefs.get(EFFORT_PREF, true) || "");
+		}
+		catch (e) { /* ignore */ }
+
+		sel.addEventListener("change", () => {
+			try { Zotero.Prefs.set(EFFORT_PREF, sel.value, true); } catch (e) { /* ignore */ }
+			const label = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : "自动";
+			if (els.status) els.status.textContent = "推理强度：" + label;
+		});
 	}
 
 	/** 用 zoom 整体缩放对话区：比逐个改 CSS 字号稳，滚动条也会一起收放 */

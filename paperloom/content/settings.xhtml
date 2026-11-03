@@ -164,13 +164,16 @@
 			<label for="reasoningEffort">推理强度</label>
 			<select id="reasoningEffort">
 				<option value="">自动（不发送该参数）</option>
-				<option value="low">低</option>
-				<option value="medium">中</option>
-				<option value="high">高</option>
-				<option value="max">最大</option>
+				<option value="low">低（low）</option>
+				<option value="high">高（high）</option>
+				<option value="max">最大（max）</option>
 			</select>
 		</div>
-		<div class="desc">仅当服务商支持 reasoning_effort 时生效；不支持会返回 400，切回「自动」即可。</div>
+		<div class="desc">
+			档位对齐 DeepSeek V4 的 <code>low / high / max</code>。DeepSeek 推理模型会同时发送
+			<code>thinking:{type:"enabled"}</code>；其他 OpenAI 兼容服务只发 <code>reasoning_effort</code>。
+			不支持该参数的服务商会返回 400，切回「自动」即可。
+		</div>
 	</section>
 
 	<section>

@@ -86,6 +86,24 @@ PaperLoom.LLM = (function () {
 		return _lastUsage;
 	}
 
+	// DeepSeek V4 系列（pro / flash）的推理模型识别，与 AI Sidebar 的规则一致
+	const DEEPSEEK_REASONING_RE = /^deepseek-(?:v4(?:[.-]\d+)?-(?:pro|flash)|flash|pro)(?:$|[-/])/i;
+
+	/**
+	 * 推理强度的请求参数。
+	 * @param {string} effort  "" / auto 表示不发送
+	 * @param {string} model   当前模型 id
+	 */
+	function reasoningParam(effort, model) {
+		const level = String(effort || "").trim();
+		if (!level || level === "auto") return {};
+
+		if (DEEPSEEK_REASONING_RE.test(String(model || ""))) {
+			return { thinking: { type: "enabled" }, reasoning_effort: level };
+		}
+		return { reasoning_effort: level };
+	}
+
 	// ------------------------------------------------------------------ 服务商注册表
 
 	/** 读取服务商列表（JSON 存在偏好里，内容很小，读写都同步） */
@@ -422,11 +440,11 @@ PaperLoom.LLM = (function () {
 		}
 
 		// 推理强度：只有用户显式选了才发送。
-		// 服务商不支持该字段时会直接 400，所以默认（""）必须完全不出现。
+		// 照 AI Sidebar 的 chatCompletionReasoningParam：
+		//   DeepSeek 推理模型必须同时带 thinking:{type:"enabled"}，只发 reasoning_effort 不会生效；
+		//   其余 OpenAI 兼容服务只发 reasoning_effort。
 		const effort = String(getPref("reasoningEffort", "") || "").trim();
-		if (effort && effort !== "auto") {
-			payload.reasoning_effort = effort;
-		}
+		Object.assign(payload, reasoningParam(effort, model));
 
 		const cacheKey = S.hash(target.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
 
@@ -553,7 +571,7 @@ PaperLoom.LLM = (function () {
 		makeRef, parseRef, resolveRef,
 		// 配置与调用
 		config, isConfigured,
-		complete, completeJSON, parseJSON, testConnection, lastUsage, extractUsage,
+		complete, completeJSON, parseJSON, testConnection, lastUsage, extractUsage, reasoningParam,
 		// 模型查询
 		listModels, extractModelIds, modelURLs,
 		// 兼容旧调用

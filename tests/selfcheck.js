@@ -538,6 +538,19 @@ function section(t) { console.log("\n" + t); }
 		check("正常返回 content", content === "ok");
 
 		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "");
+
+		// DeepSeek 推理模型必须同时带 thinking，否则 effort 不生效
+		const deep = PL.LLM.reasoningParam("high", "deepseek-v4-pro");
+		check("★ DeepSeek 同时发送 thinking",
+			deep.thinking && deep.thinking.type === "enabled" && deep.reasoning_effort === "high",
+			JSON.stringify(deep));
+
+		const other = PL.LLM.reasoningParam("high", "gpt-5.5");
+		check("非 DeepSeek 只发 reasoning_effort",
+			other.reasoning_effort === "high" && !other.thinking, JSON.stringify(other));
+
+		check("自动时不发送任何 reasoning 参数",
+			Object.keys(PL.LLM.reasoningParam("", "deepseek-v4-pro")).length === 0);
 	}
 
 	console.log("\n" + "=".repeat(50));
