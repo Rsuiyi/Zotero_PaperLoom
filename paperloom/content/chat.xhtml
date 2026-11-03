@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8" />
+	<title>PaperLoom 对话</title>
+	<link rel="stylesheet" href="chrome://paperloom/content/styles/paperloom.css" />
+</head>
+<body>
+	<div class="pl-chat">
+		<div class="pl-toolbar">
+			<strong id="pl-context-label">PaperLoom</strong>
+			<span class="pl-stats" id="pl-stats"></span>
+			<span style="flex:1"></span>
+			<button id="pl-btn-graph" title="打开知识图谱总页面">图谱</button>
+			<button id="pl-btn-memory" title="打开记忆卡片面板">记忆</button>
+			<button id="pl-btn-clear" title="清空当前会话显示">清屏</button>
+		</div>
+
+		<div class="pl-messages" id="pl-messages"></div>
+
+		<div class="pl-composer">
+			<div class="pl-ref-chips" id="pl-ref-chips"></div>
+			<textarea id="pl-input" placeholder="提问（输入 @ 可引用库里其他论文；Ctrl+Enter 发送）"></textarea>
+			<div class="pl-composer-actions">
+				<button id="pl-btn-send" class="pl-primary">发送</button>
+				<span class="pl-muted" id="pl-status"></span>
+			</div>
+		</div>
+	</div>
+
+	<script src="chrome://paperloom/content/chat.js"></script>
+</body>
+</html>
