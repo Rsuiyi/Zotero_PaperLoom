@@ -788,6 +788,9 @@
 	 * 在阅读器里高亮引用的那一句（而不是整页）。
 	 * 只在文本层 DOM 上加临时背景色，不写入 Zotero 标注库。
 	 */
+	// 每次点击递增；旧的等待循环发现序号变了就退出，避免两个引用互相跳页
+	let highlightSeq = 0;
+
 	async function highlightInReader(attachmentId, page, quote) {
 		const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
 		const reader = readers.find(r => r.itemID === attachmentId);
@@ -802,46 +805,106 @@
 		}
 		if (!win || !win.document) return false;
 
-		const doc = win.document;
-		const spans = Array.from(doc.querySelectorAll(".textLayer span"));
-		if (!spans.length) return false;
+		// 文本层可能在主文档，也可能在子 frame 里，两处都找
+		const docs = [win.document];
+		try {
+			for (let i = 0; i < win.frames.length; i++) {
+				docs.push(win.frames[i].document);
+			}
+		}
+		catch (e) { /* 跨域 frame 跳过 */ }
 
 		const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
-		const needle = norm(quote).slice(0, 40);
-		if (!needle) return false;
 
-		let target = spans.find(sp => norm(sp.textContent).includes(needle));
-		if (!target) {
-			const frag = needle.split(" ").filter(w => w.length >= 4).slice(0, 3).join(" ");
-			if (frag) target = spans.find(sp => norm(sp.textContent).includes(frag));
+		for (const doc of docs) {
+			const layers = Array.from(doc.querySelectorAll(".textLayer"));
+			if (!layers.length) continue;
+
+			// 优先只看目标页
+			let candidates = layers;
+			const targetPage = layers.find((l) => {
+				const p = l.closest(".page");
+				return p && Number(p.getAttribute("data-page-number")) === Number(page);
+			});
+			if (targetPage) candidates = [targetPage];
+
+			// 把整页文字去掉空白后拼接，并记录每个 span 的区间 —— 引文跨 span 也能命中
+			for (const layer of candidates) {
+				const spans = Array.from(layer.querySelectorAll("span"));
+				if (!spans.length) continue;
+
+				let full = "";
+				const ranges = [];
+				for (const sp of spans) {
+					const t = String(sp.textContent || "").replace(/\s+/g, "");
+					if (!t) continue;
+					ranges.push({ span: sp, start: full.length, end: full.length + t.length });
+					full += t;
+				}
+
+				const key = String(quote || "").replace(/\s+/g, "");
+				if (!key || !full) continue;
+
+				// 先用前 30 字找，找不到再缩短到 16 字
+				let from = -1;
+				let len = 0;
+				for (const size of [30, 16]) {
+					const probe = key.slice(0, size);
+					if (probe.length < 8) continue;
+					const idx = full.indexOf(probe);
+					if (idx >= 0) { from = idx; len = key.length; break; }
+				}
+				if (from < 0) continue;
+
+				// 清掉上一次高亮
+				for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
+
+				if (!doc.getElementById("paperloom-hl-style")) {
+					const style = doc.createElement("style");
+					style.id = "paperloom-hl-style";
+					style.textContent = ".paperloom-hl{background:rgba(255,214,0,.6)!important;border-radius:2px;box-shadow:0 0 0 2px rgba(255,214,0,.35);}";
+					(doc.head || doc.documentElement).appendChild(style);
+				}
+
+				const to = from + Math.max(len, 8);
+				let first = null;
+				for (const r of ranges) {
+					if (r.end <= from || r.start >= to) continue;
+					r.span.classList.add("paperloom-hl");
+					if (!first) first = r.span;
+				}
+
+				if (first) {
+					try { first.scrollIntoView({ block: "center", behavior: "smooth" }); }
+					catch (e) { /* ignore */ }
+					try { Zotero.debug("[PaperLoom] 高亮命中 p." + page + "，span 数 " + ranges.length); } catch (e2) { }
+					return true;
+				}
+			}
 		}
-		if (!target) return false;
 
-		for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
-
-		if (!doc.getElementById("paperloom-hl-style")) {
-			const style = doc.createElement("style");
-			style.id = "paperloom-hl-style";
-			style.textContent = ".paperloom-hl{background:rgba(255,214,0,.55)!important;border-radius:2px;box-shadow:0 0 0 2px rgba(255,214,0,.35);}";
-			(doc.head || doc.documentElement).appendChild(style);
-		}
-
-		target.classList.add("paperloom-hl");
-		try { target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { /* ignore */ }
-		return true;
+		try { Zotero.debug("[PaperLoom] 高亮未命中 p." + page + "，文本层数 " + docs.reduce((n, d) => n + d.querySelectorAll('.textLayer').length, 0)); } catch (e) { }
+		return false;
 	}
 
-	/** 阅读器打开后需要等页面渲染：最多重试约 8 秒 */
+	/** 打开后等页面渲染；有新的点击就放弃旧循环，避免互相跳页 */
 	async function highlightWithRetry(attachmentId, page, quote) {
+		const seq = ++highlightSeq;
+
+		// 只在开始时导航一次
+		try {
+			const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+			const reader = readers.find(r => r.itemID === attachmentId);
+			if (reader && reader.navigate) {
+				await reader.navigate({ pageIndex: Math.max(0, (page || 1) - 1) });
+			}
+		}
+		catch (e) { /* ignore */ }
+
 		for (let i = 0; i < 20; i++) {
 			await new Promise(r => setTimeout(r, 400));
+			if (seq !== highlightSeq) return false;      // 已被更新的点击取代
 			try {
-				const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
-				const reader = readers.find(r => r.itemID === attachmentId);
-				if (reader && reader.navigate) {
-					try { await reader.navigate({ pageIndex: Math.max(0, (page || 1) - 1) }); }
-					catch (e) { /* ignore */ }
-				}
 				if (await highlightInReader(attachmentId, page, quote)) return true;
 			}
 			catch (e) { /* 重试 */ }
