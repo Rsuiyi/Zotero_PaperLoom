@@ -84,6 +84,8 @@
 		$("useCache").checked = prefGet("useCache", true) !== false;
 		$("dataDir").value = String(prefGet("dataDir", ""));
 		$("systemPrompt").value = String(prefGet("systemPrompt", ""));
+		$("fontSize").value = String(prefGet("fontSize", 13));
+		$("reasoningEffort").value = String(prefGet("reasoningEffort", ""));
 
 		try {
 			$("resolvedDir").textContent = PL ? PL.Storage.root() : "—";
@@ -106,6 +108,11 @@
 		prefSet("dataDir", String($("dataDir").value || "").trim());
 		// 系统提示词保留内部换行，只去掉首尾空白
 		prefSet("systemPrompt", String($("systemPrompt").value || "").trim());
+
+		const font = parseInt($("fontSize").value, 10);
+		if (Number.isFinite(font)) prefSet("fontSize", Math.max(10, Math.min(22, font)));
+
+		prefSet("reasoningEffort", String($("reasoningEffort").value || ""));
 
 		setStatus("已保存", "ok");
 	}

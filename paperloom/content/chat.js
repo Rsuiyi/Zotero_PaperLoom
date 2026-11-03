@@ -91,6 +91,8 @@
 		$("pl-btn-graph").addEventListener("click", () => openPanel("graph"));
 		$("pl-btn-memory").addEventListener("click", () => openPanel("memory"));
 		$("pl-btn-settings").addEventListener("click", () => openPanel("settings"));
+		$("pl-btn-font-down").addEventListener("click", () => applyFont(currentFont() - 1));
+		$("pl-btn-font-up").addEventListener("click", () => applyFont(currentFont() + 1));
 
 		window.addEventListener("message", (ev) => {
 			const msg = ev.data;
@@ -109,6 +111,7 @@
 			tryPickSelectedItem();
 		}
 
+		applyFont(currentFont());
 		refreshStats();
 	}
 
@@ -394,6 +397,40 @@
 			}
 			if (quotes.childNodes.length) wrap.appendChild(quotes);
 		}
+		else {
+			// 模型没给出可定位引用时，也要能看到"这轮到底用了哪些原文"
+			const sources = result.sources || [];
+			if (sources.length) {
+				const head = document.createElement("div");
+				head.className = "pl-msg-meta";
+				head.textContent = "来源（本轮提供的原文证据）";
+				wrap.appendChild(head);
+
+				const box = document.createElement("div");
+				box.className = "pl-cite-quotes";
+				for (const s of sources) {
+					const item = document.createElement("div");
+					item.className = "pl-cite-quote";
+
+					const h = document.createElement("button");
+					h.type = "button";
+					h.className = "pl-cite-quote-head";
+					h.textContent = "p." + (s.page || "?") + " · "
+						+ String(s.title || s.paperId).slice(0, 28)
+						+ "（点击跳到原文）";
+					h.addEventListener("click", () => jumpTo(s.paperId, s.page));
+
+					const body = document.createElement("div");
+					body.className = "pl-cite-quote-body";
+					body.textContent = "“" + s.quote + "”";
+
+					item.appendChild(h);
+					item.appendChild(body);
+					box.appendChild(item);
+				}
+				wrap.appendChild(box);
+			}
+		}
 
 		els.messages.appendChild(wrap);
 		scrollToBottom();
@@ -402,6 +439,26 @@
 	/** 千分位，避免 12345 这种数字难读 */
 	function fmtTokens(n) {
 		return Number(n || 0).toLocaleString("en-US");
+	}
+
+	// ------------------------------------------------------------ 字号
+
+	const FONT_PREF = "extensions.paperloom.fontSize";
+
+	function currentFont() {
+		try {
+			const v = parseInt(Zotero.Prefs.get(FONT_PREF, true), 10);
+			if (Number.isFinite(v)) return v;
+		}
+		catch (e) { /* ignore */ }
+		return 13;
+	}
+
+	/** 用 zoom 整体缩放对话区：比逐个改 CSS 字号稳，滚动条也会一起收放 */
+	function applyFont(size) {
+		const px = Math.max(10, Math.min(22, size));
+		document.body.style.zoom = String(px / 13);
+		try { Zotero.Prefs.set(FONT_PREF, px, true); } catch (e) { /* ignore */ }
 	}
 
 	function intentLabel(intent) {

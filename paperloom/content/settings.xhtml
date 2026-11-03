@@ -153,6 +153,24 @@
 			<input type="checkbox" id="useCache" />
 			<span class="unit">按提示词哈希缓存</span>
 		</div>
+
+		<div class="row">
+			<label for="fontSize">对话字号（px）</label>
+			<input type="number" id="fontSize" min="10" max="22" step="1" style="max-width:100px" />
+			<span class="unit">面板里也可用 A− / A+</span>
+		</div>
+
+		<div class="row">
+			<label for="reasoningEffort">推理强度</label>
+			<select id="reasoningEffort">
+				<option value="">自动（不发送该参数）</option>
+				<option value="low">低</option>
+				<option value="medium">中</option>
+				<option value="high">高</option>
+				<option value="max">最大</option>
+			</select>
+		</div>
+		<div class="desc">仅当服务商支持 reasoning_effort 时生效；不支持会返回 400，切回「自动」即可。</div>
 	</section>
 
 	<section>

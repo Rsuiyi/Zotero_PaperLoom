@@ -421,6 +421,13 @@ PaperLoom.LLM = (function () {
 			payload.response_format = { type: "json_object" };
 		}
 
+		// 推理强度：只有用户显式选了才发送。
+		// 服务商不支持该字段时会直接 400，所以默认（""）必须完全不出现。
+		const effort = String(getPref("reasoningEffort", "") || "").trim();
+		if (effort && effort !== "auto") {
+			payload.reasoning_effort = effort;
+		}
+
 		const cacheKey = S.hash(target.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
 
 		if (cfg.useCache) {

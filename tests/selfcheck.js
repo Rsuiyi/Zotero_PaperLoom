@@ -510,6 +510,36 @@ function section(t) { console.log("\n" + t); }
 		Zotero.Prefs.set("extensions.paperloom.systemPrompt", "");
 	}
 
+	section("15. 推理强度参数与请求体");
+	{
+		PL.LLM.saveProviders([{ id: "p_eff", name: "测试", baseURL: "https://example.com/v1", apiKey: "sk-x", models: ["m"] }]);
+		Zotero.Prefs.set("extensions.paperloom.chatModelRef", "p_eff|m");
+		Zotero.Prefs.set("extensions.paperloom.useCache", false);
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "high");
+
+		let captured = null;
+		sandbox.fetch = async (url, init) => {
+			captured = JSON.parse(init.body);
+			return {
+				ok: true,
+				status: 200,
+				text: async () => JSON.stringify({
+					choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+					usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+				})
+			};
+		};
+
+		const content = await PL.LLM.complete({ messages: [{ role: "user", content: "hi" }] });
+		check("请求体带上 reasoning_effort", captured && captured.reasoning_effort === "high",
+			JSON.stringify(captured));
+		check("请求成功后记录 usage", PL.LLM.lastUsage() && PL.LLM.lastUsage().input === 10,
+			JSON.stringify(PL.LLM.lastUsage()));
+		check("正常返回 content", content === "ok");
+
+		Zotero.Prefs.set("extensions.paperloom.reasoningEffort", "");
+	}
+
 	console.log("\n" + "=".repeat(50));
 	console.log("通过 " + pass + " 项，失败 " + fail + " 项");
 	console.log("=".repeat(50));

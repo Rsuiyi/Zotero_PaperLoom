@@ -18,6 +18,13 @@ pref("extensions.paperloom.extractModel", "");
 // 用户附加的系统提示词：拼在默认规则之后，可覆盖回答风格，不能违反证据与引用规则
 pref("extensions.paperloom.systemPrompt", "");
 
+// 对话区字号（px）；界面里用 A− / A+ 调整
+pref("extensions.paperloom.fontSize", 13);
+
+// 推理强度："" = 不发送该参数（自动）；可选 low / medium / high / max
+// 只有服务商支持 reasoning_effort 时才有效，不支持会返回 400
+pref("extensions.paperloom.reasoningEffort", "");
+
 // ⚠ 必须 ≥ 4096：推理模型的 reasoning token 计入 completion，给小了会出现 content 为空。
 pref("extensions.paperloom.maxTokens", 4096);
 pref("extensions.paperloom.temperature", "0.3");

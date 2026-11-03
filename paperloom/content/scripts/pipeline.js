@@ -57,6 +57,20 @@ PaperLoom.Pipeline = (function () {
 		return "## " + title + "\n" + lines.join("\n\n");
 	}
 
+	/**
+	 * 本轮实际提供给模型的证据 → UI 的「来源」卡片。
+	 * 即使模型没在正文里写 [PID, p.x]，用户也能看到回答了哪些原文。
+	 */
+	function buildSources(hits, titles) {
+		return (hits || []).slice(0, 8).map((h) => ({
+			paperId: h.chunk.paperId,
+			page: h.chunk.page,
+			chunkId: h.chunk.chunkId,
+			title: (titles && titles[h.chunk.paperId]) || h.chunk.paperId,
+			quote: String(h.chunk.text || "").slice(0, 220)
+		}));
+	}
+
 	function renderGraphContext(graphCtx) {
 		if (!graphCtx || !graphCtx.edges || !graphCtx.edges.length) return "";
 		const nodeLabel = Object.create(null);
@@ -350,6 +364,7 @@ PaperLoom.Pipeline = (function () {
 			return {
 				turn, intent, warnings, titles,
 				answer: turn.answer, citations: turn.citations,
+				sources: buildSources(currentHits, titles),
 				memoryUsed: memoryFacts, diff: null, degraded: true
 			};
 		}
@@ -457,6 +472,7 @@ PaperLoom.Pipeline = (function () {
 			turn, intent, warnings, titles,
 			answer: parsed.answer || "",
 			citations: citations,
+			sources: buildSources(currentHits, titles),
 			memoryUsed: memoryFacts,
 			memoryApplied: memoryApplied,
 			diff: diff,
