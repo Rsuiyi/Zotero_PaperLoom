@@ -222,6 +222,52 @@
 		setStatus("已删除服务商", "ok");
 	}
 
+	/**
+	 * 记录窗口几何。
+	 * 我们看不到用户的屏幕，只能靠这份数据判断：
+	 * 窗口到底在哪、屏幕可用区域多大、打开后有没有被系统移动。
+	 * 结果同时写进页面顶部和 <数据目录>/paperloom/windowlog.json。
+	 */
+	function logWindowGeometry() {
+		const snap = () => ({
+			t: Date.now(),
+			pos: [window.screenX, window.screenY],
+			outer: [window.outerWidth, window.outerHeight],
+			inner: [window.innerWidth, window.innerHeight],
+			availSize: [window.screen.availWidth, window.screen.availHeight],
+			availPos: [window.screen.availLeft, window.screen.availTop],
+			screenSize: [window.screen.width, window.screen.height],
+			dpr: window.devicePixelRatio
+		});
+
+		const samples = [snap()];
+
+		const paint = () => {
+			const el = $("win-geo");
+			if (!el) return;
+			const s = samples[samples.length - 1];
+			el.textContent = "窗口 " + s.pos.join(",") + " · 尺寸 " + s.outer.join("×")
+				+ " · 屏幕可用 " + s.availSize.join("×")
+				+ " · 缩放 " + s.dpr;
+		};
+		paint();
+
+		setTimeout(() => { samples.push(snap()); paint(); }, 600);
+		setTimeout(() => { samples.push(snap()); paint(); }, 1500);
+
+		setTimeout(() => {
+			try {
+				if (PL && PL.Storage) {
+					PL.Storage.writeJSON("windowlog.json", {
+						at: new Date().toISOString(),
+						samples: samples
+					});
+				}
+			}
+			catch (e) { /* ignore */ }
+		}, 2000);
+	}
+
 	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */
 	function centerWindow(w, sizes) {
 		if (!w) return;
@@ -437,6 +483,7 @@
 		}
 
 		loadParams();
+		logWindowGeometry();
 		renderProviders();
 		renderModelSelects();
 		bindEffortSeg();
