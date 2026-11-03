@@ -96,6 +96,7 @@
 		$("pl-show-papers").addEventListener("change", rebuildView);
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
+		$("pl-graph-add-node").addEventListener("click", addConcept);
 
 		canvas.addEventListener("mousedown", onMouseDown);
 		canvas.addEventListener("mousemove", onMouseMove);
@@ -501,6 +502,50 @@
 		draw();
 	}
 
+	// ------------------------------------------------------------ 手动编辑
+
+	async function addConcept() {
+		const input = $("pl-graph-new-label");
+		const label = String(input.value || "").trim();
+		if (!label) return;
+		try {
+			await PL.GraphStore.upsertNode({ type: "concept", label: label, paperIds: [], weight: 1 });
+			input.value = "";
+			await load();
+		}
+		catch (e) {
+			window.alert("添加概念失败：" + e);
+		}
+	}
+
+	async function deleteNodeAction(node) {
+		if (!window.confirm("删除概念「" + node.label + "」及其全部关联边？")) return;
+		try {
+			await PL.GraphStore.removeNode(node.nodeId);
+			$("pl-graph-detail").innerHTML = "";
+			$("pl-graph-hint").style.display = "block";
+			await load();
+		}
+		catch (e) {
+			window.alert("删除失败：" + e);
+		}
+	}
+
+	async function renameNodeAction(node) {
+		const next = window.prompt("新的概念名称", node.label);
+		if (next == null) return;
+		const label = String(next).trim();
+		if (!label || label === node.label) return;
+		try {
+			const updated = await PL.GraphStore.renameNode(node.nodeId, label);
+			await load();
+			if (updated) showDetail(updated);
+		}
+		catch (e) {
+			window.alert("改名失败：" + e);
+		}
+	}
+
 	// ------------------------------------------------------------ 证据卡片
 
 	function showDetail(node) {
@@ -520,6 +565,22 @@
 			+ " · 关联 " + (node.paperIds || []).length + " 篇论文"
 			+ ((node.paperIds || []).length >= 2 ? "（跨论文）" : "");
 		head.appendChild(meta);
+
+		// 看图即改：重命名 / 删除
+		const actions = document.createElement("div");
+		actions.className = "pl-graph-actions";
+
+		const renameBtn = document.createElement("button");
+		renameBtn.textContent = "重命名";
+		renameBtn.addEventListener("click", () => renameNodeAction(node));
+
+		const delBtn = document.createElement("button");
+		delBtn.textContent = "删除节点";
+		delBtn.addEventListener("click", () => deleteNodeAction(node));
+
+		actions.appendChild(renameBtn);
+		actions.appendChild(delBtn);
+		head.appendChild(actions);
 
 		if ((node.aliases || []).length) {
 			const al = document.createElement("div");
@@ -575,6 +636,22 @@
 			jump.textContent = "跳转到 p." + (ev.page || 1);
 			jump.addEventListener("click", () => jumpTo(ev.paperId, ev.page));
 			card.appendChild(jump);
+
+			const delEdge = document.createElement("button");
+			delEdge.textContent = "删除这条边";
+			delEdge.addEventListener("click", async () => {
+				if (!window.confirm("删除这条关联边？")) return;
+				try {
+					await PL.GraphStore.removeEdge(e.edgeId);
+					await load();
+					const fresh = (graph.nodes || []).find(n => n.nodeId === node.nodeId);
+					if (fresh) showDetail(fresh);
+				}
+				catch (err) {
+					window.alert("删除失败：" + err);
+				}
+			});
+			card.appendChild(delEdge);
 
 			box.appendChild(card);
 		}

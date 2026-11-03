@@ -329,6 +329,7 @@ function addToWindow(win) {
 	}
 
 	addToolbarButton(doc);
+	installDock(win);
 
 	const menu = doc.createXULElement("menu");
 	menu.id = "paperloom-menu";
@@ -378,16 +379,114 @@ function addToolbarButton(doc) {
 
 	btn.addEventListener("command", () => {
 		try {
-			openTab(doc.defaultView, "chat");
+			toggleDock(doc.defaultView);
 		}
 		catch (e) {
-			log("工具栏按钮打开面板失败: " + e);
+			log("工具栏按钮切换右侧面板失败: " + e);
 		}
 	});
 
 	// 放在弹性 spacer 之前，避免被挤到最右边
 	const spacer = toolbar.querySelector('spacer[flex="1"]');
 	toolbar.insertBefore(btn, spacer || null);
+}
+
+/**
+ * 右侧常驻面板。
+ * 挂在 #zotero-layout-switcher 的末尾（条目列表 / 分隔条 / 条目详情之后），
+ * 自带一条可拖动 splitter，宽度随用户拖动变化 —— 这就是"一直待在右侧"的实现。
+ */
+function installDock(win) {
+	const doc = win.document;
+	if (!doc || doc.getElementById("paperloom-dock")) return;
+
+	const host = doc.getElementById("zotero-layout-switcher");
+	if (!host) {
+		log("找不到 #zotero-layout-switcher，右侧面板不可用");
+		return;
+	}
+
+	const splitter = doc.createXULElement("splitter");
+	splitter.id = "paperloom-dock-splitter";
+	splitter.setAttribute("orient", "horizontal");
+	splitter.setAttribute("resizebefore", "closest");
+	splitter.setAttribute("resizeafter", "closest");
+
+	const dock = doc.createXULElement("vbox");
+	dock.id = "paperloom-dock";
+	dock.setAttribute("width", "420");
+	dock.setAttribute("style", "min-width:320px;max-width:760px;");
+
+	const frame = doc.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
+	frame.id = "paperloom-dock-frame";
+	// mode=item：默认跟随当前选中的论文；选中变化由下面的轮询投递
+	frame.setAttribute("src", "chrome://paperloom/content/chat.xhtml?mode=item");
+	frame.setAttribute("flex", "1");
+	frame.style.cssText = "border:0;display:block;width:100%;height:100%;";
+
+	dock.appendChild(frame);
+	host.appendChild(splitter);
+	host.appendChild(dock);
+
+	// 跟随选中条目。用轮询而不是私有选择事件，跨版本更稳。
+	let lastKey = null;
+	dock._paperloomTimer = win.setInterval(() => {
+		try {
+			const pane = win.ZoteroPane;
+			const items = pane && pane.getSelectedItems();
+			const item = items && items.find(i => i.isRegularItem && i.isRegularItem());
+			if (!item || item.key === lastKey) return;
+			lastKey = item.key;
+			frame.contentWindow.postMessage({
+				type: "paperloom:item",
+				itemKey: item.key,
+				libraryID: item.libraryID
+			}, "*");
+		}
+		catch (e) { /* 窗口关闭中 */ }
+	}, 1200);
+}
+
+function removeDock(win) {
+	try {
+		const doc = win.document;
+		if (!doc) return;
+		const dock = doc.getElementById("paperloom-dock");
+		if (dock) {
+			if (dock._paperloomTimer) win.clearInterval(dock._paperloomTimer);
+			dock.remove();
+		}
+		const splitter = doc.getElementById("paperloom-dock-splitter");
+		if (splitter) splitter.remove();
+	}
+	catch (e) { /* ignore */ }
+}
+
+/** 工具栏按钮：显示 / 隐藏右侧面板 */
+function toggleDock(win) {
+	try {
+		const doc = win.document;
+		let dock = doc.getElementById("paperloom-dock");
+		if (!dock) {
+			installDock(win);
+			dock = doc.getElementById("paperloom-dock");
+		}
+		if (!dock) return;
+
+		const splitter = doc.getElementById("paperloom-dock-splitter");
+		const hidden = dock.hasAttribute("hidden");
+		if (hidden) {
+			dock.removeAttribute("hidden");
+			if (splitter) splitter.removeAttribute("hidden");
+		}
+		else {
+			dock.setAttribute("hidden", "true");
+			if (splitter) splitter.setAttribute("hidden", "true");
+		}
+	}
+	catch (e) {
+		log("切换右侧面板失败: " + e);
+	}
 }
 
 function makeMenuItem(doc, id, label, handler) {
@@ -404,6 +503,7 @@ function removeFromWindow(win) {
 	if (menu) menu.remove();
 	const btn = win.document.getElementById("paperloom-toolbar-btn");
 	if (btn) btn.remove();
+	removeDock(win);
 }
 
 const TAB_SPECS = {

@@ -264,6 +264,14 @@
 		}
 	}
 
+	/** 设置里直接嵌入记忆 / 图谱管理页（同一份实现，支持增删改） */
+	function showManageFrame(src) {
+		const frame = $("pl-manage-frame");
+		if (!frame) return;
+		frame.src = src;
+		frame.style.display = "block";
+	}
+
 	// ------------------------------------------------------------------ 内嵌高度
 
 	/**
@@ -328,6 +336,10 @@
 
 		$("btn-add-provider").addEventListener("click", () => openProviderDialog(""));
 		$("btn-test").addEventListener("click", testSelected);
+
+		// 全局记忆 / 图谱：嵌在设置里直接看、直接改
+		$("btn-manage-memory").addEventListener("click", () => showManageFrame("chrome://paperloom/content/memory.xhtml"));
+		$("btn-manage-graph").addEventListener("click", () => showManageFrame("chrome://paperloom/content/graph.xhtml"));
 		$("btn-save").addEventListener("click", saveParams);
 		if ($("btn-close")) $("btn-close").addEventListener("click", () => window.close());
 

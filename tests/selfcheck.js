@@ -460,6 +460,23 @@ function section(t) { console.log("\n" + t); }
 			&& urls.includes("https://api.example.com/models"), JSON.stringify(urls));
 	}
 
+	section("13. 图谱手动编辑");
+	{
+		await PL.GraphStore.upsertNode({ type: "concept", label: "测试概念" });
+		let g = await PL.GraphStore.load();
+		const node = g.nodes.find(n => n.label === "测试概念");
+		check("新增概念成功", !!node, JSON.stringify(g.nodes));
+
+		const renamed = await PL.GraphStore.renameNode(node.nodeId, "改名后概念");
+		g = await PL.GraphStore.load();
+		check("★ 重命名同步更新 nodeId", !!renamed && g.nodes.some(n => n.label === "改名后概念"),
+			JSON.stringify(g.nodes));
+
+		await PL.GraphStore.removeNode(renamed.nodeId);
+		g = await PL.GraphStore.load();
+		check("删除节点生效", !g.nodes.some(n => n.label === "改名后概念"));
+	}
+
 	console.log("\n" + "=".repeat(50));
 	console.log("通过 " + pass + " 项，失败 " + fail + " 项");
 	console.log("=".repeat(50));

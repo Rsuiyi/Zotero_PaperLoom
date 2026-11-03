@@ -158,7 +158,10 @@ PaperLoom.Pipeline = (function () {
 
 		const currentDoc = opts.item ? focusDocs.find(d => d.paperId === opts.item.key) : null;
 		if (opts.item && currentDoc && !(currentDoc.chunks || []).length) {
-			warnings.push("当前论文没有可用全文（可能缺附件或未建索引），回答只能依赖库内其他论文与元数据。");
+			const errs = (currentDoc.extractionErrors || []).join("；");
+			warnings.push("当前论文没有可用全文（缺附件或未建索引）"
+				+ (errs ? "，提取过程报错：" + errs : "")
+				+ "。回答只能依赖库内其他论文与元数据。");
 		}
 		if (currentDoc && currentDoc.textSource && currentDoc.textSource !== "pdftotext-cache") {
 			warnings.push("当前论文的页码来源是「" + currentDoc.textSource + "」，引用页码可能不精确。");

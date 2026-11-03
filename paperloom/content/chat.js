@@ -70,11 +70,6 @@
 		els.label = $("pl-context-label");
 		els.stats = $("pl-stats");
 		els.refChips = $("pl-ref-chips");
-		els.dock = $("pl-dock");
-		els.dockHandle = $("pl-dock-handle");
-		els.memoryBox = $("pl-memory-box");
-		els.graphFrame = $("pl-graph-frame");
-		els.dockHint = $("pl-dock-hint");
 
 		// 先等一会儿：刚启动就开始恢复的标签页会早于插件初始化
 		if (!PL) {
@@ -114,136 +109,7 @@
 			tryPickSelectedItem();
 		}
 
-		initDock();
 		refreshStats();
-	}
-
-	// ------------------------------------------------------------ 下方面板：记忆 / 图谱
-
-	const DOCK_KEY = "paperloom.dockHeight";
-	let dockTab = "memory";
-
-	/** 拖动条 + 标签切换 + 记忆定时刷新 */
-	function initDock() {
-		if (!els.dock) return;
-
-		try {
-			const saved = parseInt(window.localStorage.getItem(DOCK_KEY), 10);
-			if (Number.isFinite(saved)) setDockHeight(saved);
-		}
-		catch (e) { /* localStorage 不可用则用默认高度 */ }
-
-		for (const btn of document.querySelectorAll(".pl-dock-tab")) {
-			btn.addEventListener("click", () => setDockTab(btn.getAttribute("data-dock")));
-		}
-		setDockTab("memory");
-
-		// 拖动上沿调整高度：向上拖变高（这才是"不用手动拉伸窗口"的关键）
-		let dragging = false;
-		let startY = 0;
-		let startH = 0;
-
-		els.dockHandle.addEventListener("mousedown", (ev) => {
-			dragging = true;
-			startY = ev.clientY;
-			startH = els.dock.getBoundingClientRect().height;
-			ev.preventDefault();
-		});
-		window.addEventListener("mousemove", (ev) => {
-			if (!dragging) return;
-			setDockHeight(startH + (startY - ev.clientY));
-		});
-		window.addEventListener("mouseup", () => {
-			if (!dragging) return;
-			dragging = false;
-			try {
-				window.localStorage.setItem(DOCK_KEY, String(Math.round(els.dock.getBoundingClientRect().height)));
-			}
-			catch (e) { /* ignore */ }
-		});
-
-		// 记忆实时刷新；不做高频轮询，4 秒足够"看得见它在长"
-		window.setInterval(() => {
-			if (dockTab === "memory") renderMemoryBox();
-		}, 4000);
-	}
-
-	function setDockHeight(h) {
-		const min = 90;
-		const max = Math.max(180, Math.round(window.innerHeight * 0.7));
-		els.dock.style.height = Math.max(min, Math.min(max, Math.round(h))) + "px";
-	}
-
-	function setDockTab(tab) {
-		dockTab = tab === "graph" ? "graph" : "memory";
-		for (const btn of document.querySelectorAll(".pl-dock-tab")) {
-			btn.classList.toggle("active", btn.getAttribute("data-dock") === dockTab);
-		}
-		if (els.memoryBox) els.memoryBox.classList.toggle("active", dockTab === "memory");
-		if (els.graphFrame) els.graphFrame.classList.toggle("active", dockTab === "graph");
-
-		if (dockTab === "memory") renderMemoryBox();
-		else refreshGraph();
-	}
-
-	/** 记忆实时列表：key / value / 置信度 / 证据数 */
-	async function renderMemoryBox() {
-		if (!PL || !PL.Memory || !els.memoryBox) return;
-		try {
-			const facts = await PL.Memory.all();
-			const list = (facts || [])
-				.slice()
-				.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
-				.slice(0, 30);
-
-			els.memoryBox.innerHTML = "";
-			if (!list.length) {
-				const empty = document.createElement("div");
-				empty.className = "pl-empty";
-				empty.textContent = "还没有记忆。聊几轮后，这里会实时长出你的偏好与读过的内容。";
-				els.memoryBox.appendChild(empty);
-				return;
-			}
-
-			for (const f of list) {
-				const item = document.createElement("div");
-				item.className = "pl-memory-item";
-
-				const key = document.createElement("div");
-				key.className = "pl-memory-key";
-				key.textContent = f.key || "(未命名)";
-
-				const val = document.createElement("div");
-				val.className = "pl-memory-val";
-				val.textContent = String(f.value == null ? "" : f.value);
-
-				const meta = document.createElement("div");
-				meta.className = "pl-memory-meta";
-				const conf = typeof f.confidence === "number" ? f.confidence.toFixed(2) : "?";
-				meta.textContent = (f.origin || "inferred") + " · 置信度 " + conf
-					+ " · 证据 " + ((f.evidence && f.evidence.length) || 0);
-
-				item.appendChild(key);
-				item.appendChild(val);
-				item.appendChild(meta);
-				els.memoryBox.appendChild(item);
-			}
-		}
-		catch (e) { /* 读不到就不打断对话 */ }
-	}
-
-	/** 通知内嵌图谱重新加载（graph.js 自己监听 message） */
-	function refreshGraph() {
-		try {
-			els.graphFrame.contentWindow.postMessage({ type: "paperloom:graph-updated" }, "*");
-		}
-		catch (e) { /* iframe 未就绪时会自己加载 */ }
-	}
-
-	/** 每轮对话后调用：当前可见的那个面板立即刷新 */
-	function refreshDock() {
-		if (dockTab === "memory") renderMemoryBox();
-		else refreshGraph();
 	}
 
 	function tryPickSelectedItem() {
@@ -267,7 +133,19 @@
 		catch (e) { /* ignore */ }
 	}
 
+	/** 用户可能在列表里选中的是 PDF 附件：统一换成它的父条目 */
+	function normalizeItem(item) {
+		try {
+			if (item && item.isAttachment && item.isAttachment() && item.parentItemID) {
+				return Zotero.Items.get(item.parentItemID) || item;
+			}
+		}
+		catch (e) { /* 保持原样 */ }
+		return item;
+	}
+
 	function setItem(item) {
+		item = normalizeItem(item);
 		if (currentItem && item && currentItem.key === item.key) return;
 		currentItem = item;
 		if (mode !== "library" && item) {
@@ -328,7 +206,6 @@
 
 			clearReferences();
 			refreshStats();
-			refreshDock();
 		}
 		catch (e) {
 			pending.remove();

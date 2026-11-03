@@ -304,8 +304,79 @@ PaperLoom.GraphStore = (function () {
 		await save({ version: S.SCHEMA_VERSION, nodes: [], edges: [] });
 	}
 
+	// ---------------------------------------------------------------- 手动编辑
+	// 图谱页面需要"看着图就能改"：新增概念、改名、删节点/边。
+	// 这些操作直接复用底层存储，不经过 LLM 抽取。
+
+	async function upsertNode(input) {
+		const graph = await load();
+		const node = S.makeNode(input);
+		const i = graph.nodes.findIndex(n => n.nodeId === node.nodeId);
+		if (i >= 0) graph.nodes[i] = Object.assign({}, graph.nodes[i], node);
+		else graph.nodes.push(node);
+		await save(graph);
+		return node;
+	}
+
+	async function renameNode(nodeId, newLabel) {
+		const graph = await load();
+		const node = graph.nodes.find(n => n.nodeId === nodeId);
+		if (!node) return null;
+
+		const label = String(newLabel || "").trim();
+		if (!label) throw new Error("名称不能为空");
+
+		const oldId = node.nodeId;
+		node.label = label;
+
+		if (node.type !== "paper") {
+			const newId = S.conceptNodeId(label);
+			if (newId !== oldId) {
+				if (graph.nodes.some(n => n.nodeId === newId)) {
+					throw new Error("已存在同名概念：" + label);
+				}
+				node.nodeId = newId;
+				for (const e of graph.edges) {
+					if (e.source === oldId) e.source = newId;
+					if (e.target === oldId) e.target = newId;
+				}
+			}
+		}
+
+		await save(graph);
+		return node;
+	}
+
+	async function removeNode(nodeId) {
+		const graph = await load();
+		graph.nodes = graph.nodes.filter(n => n.nodeId !== nodeId);
+		graph.edges = graph.edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+		await save(graph);
+		return graph;
+	}
+
+	async function upsertEdge(input) {
+		const edge = S.makeEdge(input);
+		const check = S.validateEdge(edge);
+		if (!check.ok) throw new Error("边不合法：" + (check.reason || "缺少证据"));
+		const graph = await load();
+		const i = graph.edges.findIndex(e => e.edgeId === edge.edgeId);
+		if (i >= 0) graph.edges[i] = edge;
+		else graph.edges.push(edge);
+		await save(graph);
+		return edge;
+	}
+
+	async function removeEdge(edgeId) {
+		const graph = await load();
+		graph.edges = graph.edges.filter(e => e.edgeId !== edgeId);
+		await save(graph);
+		return graph;
+	}
+
 	return {
 		load, save, applyGraphDelta, neighbors, findConceptsByQuery,
-		alignConcept, similarity, indexNodes, stats, clear
+		alignConcept, similarity, indexNodes, stats, clear,
+		upsertNode, renameNode, removeNode, upsertEdge, removeEdge
 	};
 })();
