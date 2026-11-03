@@ -18,10 +18,11 @@ PaperLoom 把三件事做成一个闭环：
 
 ## 项目状态
 
-**开发中。** 当前处于 M0（插件骨架验证）之前，仓库内仅有设计与计划。
+**开发中。** 插件骨架与领域层已实现，正在真机冒烟。
 
-- 技术路线：Zotero 7 bootstrap 插件（Firefox 115 ESR 内核），原生 ES Module，零构建步骤
+- 目标宿主：**Zotero 10.x**（兼容 7.0 及以上），bootstrap 插件，原生 JS，零构建步骤
 - 数据全部本地存储，仅将选中的上下文发往所配置的 LLM 接口
+- 兼容性结论与回归清单见 [docs/zotero10-compat.md](docs/zotero10-compat.md)
 
 ## 文档
 

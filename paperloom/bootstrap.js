@@ -11,12 +11,33 @@ var PaperLoom;          // 领域层命名空间，由 Services.scriptloader 注
 var chromeHandle;
 var pluginRootURI;
 var registeredSectionID = null;
-var paneRegistered = false;
+var preferencePaneID = null;
 
 const PLUGIN_ID = "paperloom@hackathon.local";
 
 function log(msg) {
 	Zotero.debug("[PaperLoom] " + msg);
+}
+
+/**
+ * 构造领域层脚本的运行作用域。
+ * bootstrap 沙箱里有 Zotero / Services / IOUtils 等，但 fetch、AbortController、
+ * setTimeout 这类 window 全局在插件沙箱里不保证存在（Zotero 10 起尤其如此），
+ * 统一从主窗口借一份，否则 llm.js 第一次发请求就 ReferenceError。
+ * 注意：构造函数不能被 bind（会破坏 new），只有方法需要 bind。
+ */
+function createDomainScope() {
+	const win = (Zotero.getMainWindow && Zotero.getMainWindow())
+		|| Services.appShell.hiddenDOMWindow;
+	const scope = { Zotero, Services, Components, ChromeUtils, IOUtils, PathUtils };
+
+	for (const name of ["fetch", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "btoa", "atob"]) {
+		if (win && typeof win[name] === "function") scope[name] = win[name].bind(win);
+	}
+	for (const name of ["AbortController", "TextDecoder", "TextEncoder", "URL", "URLSearchParams", "console", "crypto"]) {
+		if (win && win[name]) scope[name] = win[name];
+	}
+	return scope;
 }
 
 function install() {
@@ -33,11 +54,12 @@ async function startup({ id, version, rootURI }) {
 		await Zotero.initializationPromise;
 
 		// ---- 载入领域层（纯 JS，与运行环境无关，Plan B 可整体搬去 Web 应用）
+		// loadSubScript 的目标对象不会继承 bootstrap 作用域，必须把依赖显式放进去。
 		const scripts = [
 			"schema.js", "storage.js", "llm.js", "chunker.js",
 			"retriever.js", "memory.js", "graphStore.js", "pipeline.js", "stubs.js"
 		];
-		const scope = {};
+		const scope = createDomainScope();
 		for (const file of scripts) {
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/" + file, scope);
 		}
@@ -61,8 +83,8 @@ async function startup({ id, version, rootURI }) {
 
 		// ---- UI 就绪后再挂界面
 		await Zotero.uiReadyPromise;
-		registerPreferencePane(rootURI);
-		registerItemPaneSection(rootURI);
+		await registerPreferencePane();
+		registerItemPaneSection();
 
 		for (const win of Zotero.getMainWindows()) {
 			addToWindow(win);
@@ -85,8 +107,10 @@ function shutdown() {
 		if (registeredSectionID && Zotero.ItemPaneManager && Zotero.ItemPaneManager.unregisterSection) {
 			Zotero.ItemPaneManager.unregisterSection(registeredSectionID);
 		}
-		if (paneRegistered && Zotero.PreferencePanes && Zotero.PreferencePanes.unregister) {
-			Zotero.PreferencePanes.unregister(PLUGIN_ID);
+		// unregister 要的是 register() 返回的 pane id，不是 pluginID
+		if (preferencePaneID && Zotero.PreferencePanes && Zotero.PreferencePanes.unregister) {
+			Zotero.PreferencePanes.unregister(preferencePaneID);
+			preferencePaneID = null;
 		}
 		if (chromeHandle) {
 			chromeHandle.destruct();
@@ -111,15 +135,17 @@ function onMainWindowUnload({ window }) {
 
 // ------------------------------------------------------------------ 偏好面板
 
-function registerPreferencePane(rootURI) {
+async function registerPreferencePane() {
 	try {
-		Zotero.PreferencePanes.register({
+		// src 用相对插件根目录的路径，交给 Zotero 自己解析；
+		// 传绝对 file:// URI 在 Zotero 10 上会被 resolveURI 当作外部地址处理。
+		preferencePaneID = await Zotero.PreferencePanes.register({
 			pluginID: PLUGIN_ID,
-			src: rootURI + "content/preferences.xhtml",
+			src: "content/preferences.xhtml",
 			label: "PaperLoom",
-			defaultXUL: false
+			image: "content/icons/paperloom.svg"
 		});
-		paneRegistered = true;
+		log("偏好面板已注册: " + preferencePaneID);
 	}
 	catch (e) {
 		log("偏好面板注册失败: " + e);
@@ -128,59 +154,76 @@ function registerPreferencePane(rootURI) {
 
 // ------------------------------------------------------------------ 侧栏 section
 
-function registerItemPaneSection(rootURI) {
+function registerItemPaneSection() {
 	if (!Zotero.ItemPaneManager || !Zotero.ItemPaneManager.registerSection) {
 		log("当前 Zotero 版本不支持 ItemPaneManager.registerSection，侧栏面板不可用");
 		return;
 	}
+
+	// Zotero 7.1+ / 10：header 与 sidenav 都必须带 icon，缺了会被 _validateObject
+	// 直接判无效且只写日志，表现就是"插件装上了但侧栏什么都没有"。
+	const ICON = "chrome://paperloom/content/icons/paperloom.svg";
+
 	try {
 		registeredSectionID = Zotero.ItemPaneManager.registerSection({
 			paneID: "paperloom-chat",
 			pluginID: PLUGIN_ID,
-			header: { l10nID: "paperloom-section-header", label: "PaperLoom 对话" },
-			sidenav: { l10nID: "paperloom-section-sidenav", label: "PaperLoom" },
+			header: { l10nID: "paperloom-section-header", icon: ICON },
+			sidenav: { l10nID: "paperloom-section-sidenav", icon: ICON },
 			bodyXHTML: '<html:div class="paperloom-section-root"></html:div>',
 			onInit: ({ body }) => {
-				// onRender 每次切换条目都会调用，必须纯、快、无副作用：
-				// 这里只建一次 iframe 骨架。
-				body.innerHTML = "";
-				const doc = body.ownerDocument;
-				const frame = doc.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
-				frame.setAttribute("src", rootURI + "content/chat.xhtml?mode=item");
-				frame.setAttribute("flex", "1");
-				frame.style.width = "100%";
-				frame.style.height = "460px";
-				frame.style.border = "0";
-				body.appendChild(frame);
-				body._paperloomFrame = frame;
+				if (body) body._paperloomFrame = null;
 			},
 			onRender: ({ body, item }) => {
-				const frame = body._paperloomFrame;
-				if (!frame || !item) return;
-				// 只投递当前条目 key，渲染逻辑在 iframe 内自己处理
-				const post = () => {
-					try {
-						frame.contentWindow.postMessage({
-							type: "paperloom:item",
-							itemKey: item.key,
-							libraryID: item.libraryID
-						}, "*");
-					}
-					catch (e) { /* iframe 尚未就绪，等 load */ }
-				};
-				if (frame.contentWindow && frame.contentDocument
-					&& frame.contentDocument.readyState === "complete") {
-					post();
+				if (!body || !item) return;
+
+				// 只建一次 iframe：onRender 每次切换条目都会调用，重建会丢对话状态。
+				// 但折叠/展开后 body 可能被 Zotero 重建，此时旧引用已脱离文档，需要补建。
+				if (body._paperloomFrame && !body.contains(body._paperloomFrame)) {
+					body._paperloomFrame = null;
 				}
-				else {
-					frame.addEventListener("load", post, { once: true });
+				if (!body._paperloomFrame) {
+					body.innerHTML = "";
+					const doc = body.ownerDocument;
+					const frame = doc.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
+					// 必须走 chrome:// 资源：file:// 的 iframe 是独立 principal，
+					// 拿不到 window.top.Zotero，面板会报"领域层未加载"。
+					frame.setAttribute("src", "chrome://paperloom/content/chat.xhtml?mode=item");
+					frame.style.cssText = "display:block;width:100%;height:460px;border:0;";
+					body.appendChild(frame);
+					body._paperloomFrame = frame;
 				}
+
+				postItemToFrame(body._paperloomFrame, item);
 			}
 		});
 		log("侧栏 section 已注册: " + registeredSectionID);
 	}
 	catch (e) {
 		log("侧栏 section 注册失败: " + e);
+	}
+}
+
+/** 把当前条目 key 投递给面板 iframe（iframe 未加载完则等 load 事件） */
+function postItemToFrame(frame, item) {
+	const send = () => {
+		try {
+			frame.contentWindow.postMessage({
+				type: "paperloom:item",
+				itemKey: item.key,
+				libraryID: item.libraryID
+			}, "*");
+		}
+		catch (e) { /* iframe 尚未就绪 */ }
+	};
+
+	try {
+		const doc = frame.contentDocument;
+		if (doc && doc.readyState === "complete") send();
+		else frame.addEventListener("load", send, { once: true });
+	}
+	catch (e) {
+		frame.addEventListener("load", send, { once: true });
 	}
 }
 
@@ -225,9 +268,9 @@ function removeFromWindow(win) {
 }
 
 const TAB_SPECS = {
-	graph: { title: "PaperLoom 图谱", src: "content/graph.xhtml" },
-	memory: { title: "PaperLoom 记忆", src: "content/memory.xhtml" },
-	chat: { title: "PaperLoom 全库对话", src: "content/chat.xhtml?mode=library" }
+	graph: { title: "PaperLoom 图谱", src: "chrome://paperloom/content/graph.xhtml" },
+	memory: { title: "PaperLoom 记忆", src: "chrome://paperloom/content/memory.xhtml" },
+	chat: { title: "PaperLoom 全库对话", src: "chrome://paperloom/content/chat.xhtml?mode=library" }
 };
 
 const openTabIDs = Object.create(null);
@@ -256,7 +299,7 @@ function openTab(win, kind) {
 		openTabIDs[kind] = id;
 
 		const frame = win.document.createElementNS("http://www.w3.org/1999/xhtml", "iframe");
-		frame.setAttribute("src", pluginRootURI + spec.src);
+		frame.setAttribute("src", spec.src);
 		frame.style.width = "100%";
 		frame.style.height = "100%";
 		frame.style.border = "0";
@@ -266,7 +309,7 @@ function openTab(win, kind) {
 	catch (e) {
 		// fallback：私有 API 变动时仍然能用独立窗口演示
 		log("Zotero_Tabs.add 失败，退回独立窗口: " + e);
-		win.openDialog(pluginRootURI + spec.src, "paperloom-" + kind,
+		win.openDialog(spec.src, "paperloom-" + kind,
 			"chrome,resizable,centerscreen,width=1100,height=760");
 	}
 }

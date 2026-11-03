@@ -1,0 +1,52 @@
+# Zotero 10 兼容性说明
+
+记录本插件从 Zotero 7 写法迁到 **Zotero 10.0.7** 时踩到的坑、依据和改法。
+所有结论都来自本机 `E:\科研工具\论文翻译器与插件\Zotero\app\omni.ja` 里的真实源码，
+不是猜的。换 Zotero 大版本时，按第 3 节清单回归一遍。
+
+---
+
+## 1. 阻断级问题（不修就完全不可用）
+
+| # | 现象 | 根因（Zotero 10 源码位置） | 修法 |
+|---|---|---|---|
+| 1 | 安装时提示"与 Zotero 10 不兼容" | `manifest.json` 的 `strict_max_version` 写的是 `8.*` | 改为 `10.99.99`，`strict_min_version` 提到 `7.0` |
+| 2 | 插件装上，但条目侧栏什么都没有 | `pluginAPI/itemPaneManager.js` 的 `optionTypeDefinition` 里 `header.icon` / `sidenav.icon` **为必填**；缺字段时 `_validateObject` 抛错、`registerSection` 返回 `false`，只写一行日志 | 两个都补 `icon: "chrome://paperloom/content/icons/paperloom.svg"`，并删掉不存在的 `label` 字段 |
+| 3 | 启动即报 `ReferenceError: Zotero is not defined` 或 `fetch is not defined` | `loadSubScript(url, {})` 的目标对象是全新沙箱，**不继承** bootstrap 作用域；而 `fetch/AbortController/setTimeout` 在插件沙箱里不保证存在（`xpcom/plugins.js` 的 scope 构造） | `bootstrap.js` 的 `createDomainScope()` 把 `Zotero/Services/IOUtils/PathUtils` 和从主窗口借来的 `fetch/AbortController/timers` 显式塞进 scope |
+| 4 | 面板显示"领域层未加载" | iframe 的 `src` 用了 `rootURI`（`file://`），与父窗口 `chrome://` 不同源，`window.top.Zotero` 直接抛 SecurityError | 所有 UI 一律走 `chrome://paperloom/content/...`；`registerChrome` 已在 startup 里注册过该映射 |
+| 5 | 全文永远只有摘要 | Zotero 10 **删除了** `Zotero.Fulltext.getIndexedText()`（`xpcom/fulltext.js` 里已无此方法） | 改走 `Zotero.Fulltext.getItemCacheFile(item)` 读 `.zotero-ft-cache`；失败则 `Zotero.PDFWorker.getFullText(itemID)`；再失败 `Zotero.Fulltext.indexItems()` 后重读缓存 |
+
+---
+
+## 2. 非阻断但会留下脏状态
+
+- `Zotero.PreferencePanes.unregister(id)` 收的是 `register()` **返回的 pane id**，不是 `pluginID`。传错不会报错，但面板不会被移除，重载插件后会残留重复项。
+- `Zotero.PreferencePanes.register()` 是 **async**，且 `src` 推荐传**相对插件根目录**的路径（内部会走 `Zotero.Plugins.resolveURI`）；传绝对 `file://` URI 容易被当成外部地址。
+- `Zotero_Tabs.add()` 在 10 里签名未变（`{id,type,data,title,index,select,onClose}` → `{id, container}`），但它仍是私有 API，保留独立窗口兜底。
+- `item.getBestAttachment()` 仍然存在（`xpcom/data/item.js`），无需改为复数版本。
+
+---
+
+## 3. 换大版本时的回归清单
+
+逐条在真机上验证，任何一条失败都先修再继续：
+
+1. 安装 xpi，Zotero 不提示不兼容（版本区间生效）
+2. 控制台 `Zotero.debug` 能看到 `领域层就绪，数据目录 …`
+3. 选中一篇论文 → 侧栏出现 PaperLoom 区块且不空白
+4. 面板里能显示当前论文标题（说明 `postMessage` 通路正常）
+5. 设置 → PaperLoom 能看到面板，改 API Key 后重开仍在
+6. 菜单 工具 → PaperLoom → 打开知识图谱（自定义 Tab 或独立窗口）
+7. 提问一次，能拿到带 `[Pn, p.x]` 的回答并点击跳转
+8. 重建图谱，进度窗口能跑完，节点/边数非零
+
+---
+
+## 4. 尚未在真机验证的部分
+
+以下只能靠真机冒烟确认，静态分析覆盖不到：
+
+- SVG 图标在 16×16 / 20×20 位置的显示效果
+- `bodyXHTML` 里的 `<html:div>` 在条目面板中的解析结果
+- `PDFWorker.getFullText()` 在无 PDF 转换器的机器上是否会卡住（已包 try/catch，但耗时未知）
+- React/XUL 侧栏折叠再展开时 iframe 是否被销毁（若被销毁，需要在 `onToggle` 里重建）

@@ -95,6 +95,22 @@ PaperLoom.Chunker = (function () {
 		return chunks;
 	}
 
+	/**
+	 * 把全文按 \f 分页符切成 pages。
+	 * 空页跳过但保留真实页号（page = 下标 + 1），保证引用跳转不会整体错位。
+	 */
+	function fillPagesFromText(result, text) {
+		const parts = String(text == null ? "" : text).split("\f");
+		if (parts.length > 1) {
+			for (let i = 0; i < parts.length; i++) {
+				if (parts[i] && parts[i].trim()) result.pages.push({ page: i + 1, text: parts[i] });
+			}
+		}
+		else if (text && String(text).trim()) {
+			result.pages.push({ page: 1, text: text });
+		}
+	}
+
 	function normalizeText(text) {
 		return String(text == null ? "" : text)
 			.replace(/\u0000/g, "")
@@ -141,22 +157,37 @@ PaperLoom.Chunker = (function () {
 			}
 			catch (e) { /* 继续尝试下一条路径 */ }
 
-			// 路径 2：全文索引里的纯文本，没有页分隔，页码只能记 1
+			// 路径 2：直接让 PDFWorker 抽文本。
+			// Zotero 10 已移除 Fulltext.getIndexedText()，必须改走 PDFWorker.getFullText()；
+			// 它返回的 text 同样带 \f 分页符，能保留真实页码。
 			try {
-				const text = await Zotero.Fulltext.getIndexedText(attachment.id);
-				if (text && text.trim()) {
-					const byForm = text.split("\f");
-					if (byForm.length > 1) {
-						for (let i = 0; i < byForm.length; i++) {
-							if (byForm[i].trim()) result.pages.push({ page: i + 1, text: byForm[i] });
+				if (Zotero.PDFWorker && Zotero.PDFWorker.getFullText) {
+					const full = await Zotero.PDFWorker.getFullText(attachment.id);
+					const text = full && full.text;
+					if (text && text.trim()) {
+						fillPagesFromText(result, text);
+						if (result.pages.length) {
+							result.source = "pdfworker";
+							return result;
 						}
-						result.source = "fulltext-indexed-paged";
 					}
-					else {
-						result.pages.push({ page: 1, text: text });
-						result.source = "fulltext-indexed-flat";
+				}
+			}
+			catch (e) { /* 继续 */ }
+
+			// 路径 3：强制建一次全文索引，再读缓存文件。
+			// 有些环境（PDF 转换器缺失、EPUB 等）PDFWorker 拿不到文本，索引是最后一条兜底。
+			try {
+				if (Zotero.Fulltext && Zotero.Fulltext.indexItems) {
+					await Zotero.Fulltext.indexItems([attachment.id], { complete: true, ignoreErrors: true });
+					const cachePath = Zotero.Fulltext.getItemCacheFile(attachment).path;
+					if (cachePath && await IOUtils.exists(cachePath)) {
+						fillPagesFromText(result, await IOUtils.readUTF8(cachePath));
+						if (result.pages.length) {
+							result.source = "fulltext-indexed";
+							return result;
+						}
 					}
-					return result;
 				}
 			}
 			catch (e) { /* 继续 */ }
