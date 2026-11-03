@@ -69,6 +69,16 @@
 		supports: "#2d9c5a"
 	};
 
+	// 主题层调色板：按 topicId 稳定分配一种颜色，让同主题概念一眼成簇
+	const TOPIC_PALETTE = ["#4A90E2", "#E67E22", "#2ECC71", "#9B59B6", "#E74C3C", "#1ABC9C", "#F39C12", "#34495E", "#16A085", "#D35400"];
+	const _topicColorMap = Object.create(null);
+	let _topicColorN = 0;
+	function colorForTopic(topicId) {
+		if (!topicId) return null;
+		if (!(topicId in _topicColorMap)) { _topicColorMap[topicId] = TOPIC_PALETTE[_topicColorN % TOPIC_PALETTE.length]; _topicColorN++; }
+		return _topicColorMap[topicId];
+	}
+
 	document.addEventListener("DOMContentLoaded", init);
 	if (document.readyState !== "loading") init();
 
@@ -98,6 +108,8 @@
 
 		$("pl-cross-only").addEventListener("change", rebuildView);
 		$("pl-show-papers").addEventListener("change", rebuildView);
+		if ($("pl-topic-color")) $("pl-topic-color").addEventListener("change", () => draw());
+		if ($("pl-graph-rebuild-topics")) $("pl-graph-rebuild-topics").addEventListener("click", rebuildTopicsAction);
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
 		$("pl-graph-add-node").addEventListener("click", addConcept);
@@ -265,6 +277,7 @@
 
 	function nodeRadius(n) {
 		if (n.type === "paper") return 11;
+		if (n.type === "topic") return Math.min(30, 12 + Math.sqrt(Math.max(1, n.members || 1)) * 3);
 		const papers = (n.paperIds || []).length;
 		return Math.min(22, 5 + Math.sqrt(Math.max(1, papers)) * 4);
 	}
@@ -488,13 +501,24 @@
 		}
 
 		// 节点
+		const topicColorOn = ($("pl-topic-color") || {}).checked;
 		for (const n of view.nodes) {
 			const p = toScreen(n);
 			const r = nodeRadius(n) * camera.scale;
 			const cross = n.type === "concept" && (n.paperIds || []).length >= 2;
-			const color = n.type === "paper" ? COLORS.paper
-				: n.type === "claim" ? COLORS.claim
-					: cross ? COLORS.crossConcept : COLORS.concept;
+			let color;
+			if (n.type === "topic") {
+				color = colorForTopic(n.nodeId) || "#7f8c8d";
+			} else if (n.type === "paper") {
+				color = COLORS.paper;
+			} else if (n.type === "claim") {
+				color = COLORS.claim;
+			} else if (topicColorOn && n.topicId) {
+				// 按主题着色：同主题概念同色；跨论文概念加白描边另行强调
+				color = colorForTopic(n.topicId);
+			} else {
+				color = cross ? COLORS.crossConcept : COLORS.concept;
+			}
 
 			const dim = selection.size > 0 && !highlightIds.has(n.nodeId);
 			ctx.globalAlpha = dim ? 0.3 : 1;
@@ -502,6 +526,10 @@
 			ctx.beginPath();
 			if (n.type === "paper") {
 				ctx.rect(p.x - r, p.y - r * 0.78, r * 2, r * 1.56);
+			}
+			else if (n.type === "topic") {
+				// 主题节点画成方块，与概念圆点区分，视觉上像"容器"
+				ctx.rect(p.x - r, p.y - r, r * 2, r * 2);
 			}
 			else {
 				ctx.arc(p.x, p.y, Math.max(3, r), 0, Math.PI * 2);
@@ -720,6 +748,26 @@
 	}
 
 	// ------------------------------------------------------------ 手动编辑
+
+	async function rebuildTopicsAction() {
+		if (!PL.GraphStore.rebuildTopics) {
+			alertAction("当前领域层不支持主题分层（请更新 graphStore.js）。");
+			return;
+		}
+		const btn = $("pl-graph-rebuild-topics");
+		if (btn) { btn.disabled = true; btn.textContent = "重建中…"; }
+		try {
+			await PL.GraphStore.rebuildTopics();
+			await load();
+			const st = PL.GraphStore.stats ? await PL.GraphStore.stats() : null;
+			$("pl-graph-hint").style.display = "block";
+			$("pl-graph-hint").textContent = "主题重建完成：共 " + (st ? st.topics : "?") + " 个主题。";
+		} catch (e) {
+			alertAction("重建主题失败：" + (e && e.message ? e.message : e));
+		} finally {
+			if (btn) { btn.disabled = false; btn.textContent = "重建主题"; }
+		}
+	}
 
 	async function addConcept() {
 		const input = $("pl-graph-new-label");

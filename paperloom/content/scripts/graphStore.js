@@ -197,18 +197,19 @@ PaperLoom.GraphStore = (function () {
 			}
 		}
 
-		// ---- 规模控制：超过上限就剪掉最弱的孤立概念节点
-		if (graph.nodes.length > S.LIMITS.maxNodesPerLibrary) {
+		// ---- 规模控制：超过上限就剪掉最弱的孤立概念节点（topic 为派生层，不计入上限、不被剪）
+		const nonTopicCount = graph.nodes.filter(n => n.type !== "topic").length;
+		if (nonTopicCount > S.LIMITS.maxNodesPerLibrary) {
 			const degree = Object.create(null);
 			for (const e of graph.edges) {
 				degree[e.source] = (degree[e.source] || 0) + 1;
 				degree[e.target] = (degree[e.target] || 0) + 1;
 			}
 			const prunable = graph.nodes
-				.filter(n => n.type === "concept")
+				.filter(n => n.type === "concept" && !n.pinned)
 				.sort((a, b) => ((degree[a.nodeId] || 0) - (degree[b.nodeId] || 0))
 					|| (a.paperIds.length - b.paperIds.length));
-			const overflow = graph.nodes.length - S.LIMITS.maxNodesPerLibrary;
+			const overflow = nonTopicCount - S.LIMITS.maxNodesPerLibrary;
 			const doomed = new Set(prunable.slice(0, overflow).map(n => n.nodeId));
 			if (doomed.size) {
 				graph.nodes = graph.nodes.filter(n => !doomed.has(n.nodeId));
@@ -296,12 +297,129 @@ PaperLoom.GraphStore = (function () {
 			edges: graph.edges.length,
 			papers: graph.nodes.filter(n => n.type === "paper").length,
 			concepts: graph.nodes.filter(n => n.type === "concept").length,
+			topics: graph.nodes.filter(n => n.type === "topic").length,
 			crossPaperConcepts: crossPaper.length
 		};
 	}
 
 	async function clear() {
 		await save({ version: S.SCHEMA_VERSION, nodes: [], edges: [] });
+	}
+
+	// ---------------------------------------------------------------- 概念分层（Topic 层）
+	// 目的：概念不再全平级堆叠。按概念间的论断边把概念聚成主题，产出 topic 节点 +
+	// concept→topic 的 belongs_to 结构边，供可视化按主题着色 / 折叠成骨架。
+	// 不引入外部库：用「论断边构成的连通分量」做轻量社区划分，分量即主题。
+	// 单属：每个概念恰好归一个 topic。pinned（用户手动归属）不被重建覆盖。
+
+	const TOPIC_EDGE_TYPES = ["relates", "supports", "contradicts", "mentions", "cites"];
+
+	/**
+	 * 基于现有图重算主题划分。纯内存计算后整体落盘。
+	 * @returns {Promise<Object>} diff { addedTopics, removedTopics, belongsTo, topicChanges }
+	 */
+	async function rebuildTopics() {
+		const graph = await load();
+		const diff = { addedTopics: [], removedTopics: [], belongsTo: [], topicChanges: [] };
+
+		const concepts = graph.nodes.filter(n => n.type === "concept");
+		const byId = Object.create(null);
+		for (const n of graph.nodes) byId[n.nodeId] = n;
+
+		// 1) 并查集：只用概念↔概念的论断边连接
+		const parent = Object.create(null);
+		for (const c of concepts) parent[c.nodeId] = c.nodeId;
+		const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+		const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+		for (const e of graph.edges) {
+			if (TOPIC_EDGE_TYPES.indexOf(e.type) < 0) continue;
+			const s = byId[e.source], t = byId[e.target];
+			if (s && t && s.type === "concept" && t.type === "concept") union(e.source, e.target);
+		}
+
+		// 2) 成员聚合到分量
+		const comps = Object.create(null);
+		for (const c of concepts) {
+			const r = find(c.nodeId);
+			(comps[r] || (comps[r] = [])).push(c);
+		}
+
+		// 3) 每个分量 → 一个 topic；孤立单概念也给它一个「散点」主题，避免再平级堆
+		const oldTopicIds = new Set(graph.nodes.filter(n => n.type === "topic").map(n => n.nodeId));
+		const keptTopicIds = new Set();
+		const newBelongs = [];
+
+		for (const root in comps) {
+			const members = comps[root];
+			// 主题标签 = 分量内 weight(关联论文数) 最高的概念名，最具代表性
+			members.sort((a, b) => (b.weight || 0) - (a.weight || 0) || (b.paperIds.length - a.paperIds.length));
+			const rep = members[0];
+			const topicLabel = members.length > 1 ? (rep.label + " 等") : rep.label;
+			const topicId = S.topicNodeId(root); // 用分量根 id 派生，稳定
+
+			let topicNode = byId[topicId];
+			if (!topicNode) {
+				topicNode = S.makeNode({ nodeId: topicId, type: "topic", label: topicLabel, members: members.length });
+				graph.nodes.push(topicNode);
+				byId[topicId] = topicNode;
+				diff.addedTopics.push(topicNode);
+			} else {
+				topicNode.label = topicLabel;
+				topicNode.members = members.length;
+			}
+			keptTopicIds.add(topicId);
+
+			for (const c of members) {
+				// pinned：用户手动归属，不被重分；但要保留其现有 belongs_to（指向用户选的主题）
+				if (c.pinned && c.topicId) {
+					keptTopicIds.add(c.topicId);
+					newBelongs.push({ source: c.nodeId, target: c.topicId });
+					continue;
+				}
+				if (c.topicId !== topicId) {
+					diff.topicChanges.push({ conceptNodeId: c.nodeId, fromTopicId: c.topicId || null, toTopicId: topicId });
+					c.topicId = topicId;
+				}
+				newBelongs.push({ source: c.nodeId, target: topicId });
+			}
+		}
+
+		// 4) 重建 belongs_to 边：先删旧的，再按最新归属加
+		graph.edges = graph.edges.filter(e => e.type !== "belongs_to");
+		for (const b of newBelongs) {
+			const edge = S.makeEdge({ source: b.source, target: b.target, type: "belongs_to", origin: "manual" });
+			graph.edges.push(edge);
+			diff.belongsTo.push(edge);
+		}
+
+		// 5) 清理空 topic（本轮未保留的）
+		if (oldTopicIds.size) {
+			const doomed = [];
+			for (const id of oldTopicIds) if (!keptTopicIds.has(id)) doomed.push(id);
+			if (doomed.length) {
+				const dset = new Set(doomed);
+				graph.nodes = graph.nodes.filter(n => !dset.has(n.nodeId));
+				graph.edges = graph.edges.filter(e => !dset.has(e.source) && !dset.has(e.target));
+				diff.removedTopics = doomed;
+			}
+		}
+
+		await save(graph);
+		return diff;
+	}
+
+	/** 手动把概念归到某主题并固定（pinned），重建时不被覆盖 */
+	async function assignConceptTopic(conceptNodeId, topicNodeId) {
+		const graph = await load();
+		const c = graph.nodes.find(n => n.nodeId === conceptNodeId && n.type === "concept");
+		if (!c) return null;
+		if (!graph.nodes.some(n => n.nodeId === topicNodeId && n.type === "topic")) return null;
+		graph.edges = graph.edges.filter(e => !(e.type === "belongs_to" && e.source === conceptNodeId));
+		graph.edges.push(S.makeEdge({ source: conceptNodeId, target: topicNodeId, type: "belongs_to", origin: "manual" }));
+		c.topicId = topicNodeId;
+		c.pinned = true;
+		await save(graph);
+		return c;
 	}
 
 	// ---------------------------------------------------------------- 手动编辑
@@ -383,6 +501,7 @@ PaperLoom.GraphStore = (function () {
 	return {
 		load, save, applyGraphDelta, neighbors, findConceptsByQuery,
 		alignConcept, similarity, indexNodes, stats, clear,
+		rebuildTopics, assignConceptTopic,
 		upsertNode, renameNode, removeNode, removeNodes, upsertEdge, removeEdge
 	};
 })();

@@ -10,8 +10,8 @@ PaperLoom.Schema = (function () {
 	const SCHEMA_VERSION = 1;
 
 	const SECTIONS = ["intro", "method", "result", "discussion", "other"];
-	const NODE_TYPES = ["paper", "concept", "claim"];
-	const EDGE_TYPES = ["mentions", "relates", "supports", "contradicts", "co_asked", "cites"];
+	const NODE_TYPES = ["paper", "concept", "claim", "topic"];
+	const EDGE_TYPES = ["mentions", "relates", "supports", "contradicts", "co_asked", "cites", "belongs_to"];
 	const EDGE_ORIGINS = ["extract", "interaction", "manual"];
 	const MEMORY_EVIDENCE_TYPES = ["explicit", "inferred", "behavior"];
 	const INTENTS = ["single_fact", "cross_paper", "concept", "meta"];
@@ -78,6 +78,13 @@ PaperLoom.Schema = (function () {
 		return "P" + String(paperId) + "-c" + String(index).padStart(3, "0");
 	}
 
+	function topicNodeId(label) {
+		return "T-" + hash(normalizeLabel(label));
+	}
+
+	// 结构边（层级关系，非论断）不要求 evidence；论断边（concept↔concept）仍强制证据。
+	const STRUCTURAL_EDGE_TYPES = ["belongs_to"];
+
 	// ---------------------------------------------------------------- 工厂
 
 	function makePaperDoc(o) {
@@ -108,14 +115,31 @@ PaperLoom.Schema = (function () {
 	function makeNode(o) {
 		const type = NODE_TYPES.indexOf(o.type) >= 0 ? o.type : "concept";
 		const label = o.label || "";
-		return {
-			nodeId: o.nodeId || (type === "paper" ? paperNodeId(o.paperId || label) : conceptNodeId(label)),
+		let nodeId = o.nodeId;
+		if (!nodeId) {
+			if (type === "paper") nodeId = paperNodeId(o.paperId || label);
+			else if (type === "topic") nodeId = topicNodeId(label);
+			else nodeId = conceptNodeId(label);
+		}
+		const node = {
+			nodeId: nodeId,
 			type: type,
 			label: label,
 			aliases: Array.isArray(o.aliases) ? o.aliases : [],
 			paperIds: Array.isArray(o.paperIds) ? o.paperIds.map(String) : [],
 			weight: typeof o.weight === "number" ? o.weight : 1
 		};
+		if (type === "topic") {
+			// 主题层特有字段：成员概念数、着色、是否被用户手动固定
+			node.members = typeof o.members === "number" ? o.members : (Array.isArray(o.members) ? o.members.length : 0);
+			node.color = o.color || "";
+		}
+		// 概念所属主题（belongs_to 的冗余缓存，供可视化按主题着色/折叠）；pinned=用户手动归属，重建时不覆盖
+		if (type === "concept") {
+			if (o.topicId != null) node.topicId = o.topicId;
+			if (o.pinned) node.pinned = true;
+		}
+		return node;
 	}
 
 	function makeEvidence(o) {
@@ -130,11 +154,17 @@ PaperLoom.Schema = (function () {
 
 	function makeEdge(o) {
 		const evidence = makeEvidence(o.evidence);
+		const type = EDGE_TYPES.indexOf(o.type) >= 0 ? o.type : "relates";
+		// 结构边无 quote，edgeId 用 source+target+type 保证唯一；论断边沿用含 quote 的 hash
+		const isStructural = STRUCTURAL_EDGE_TYPES.indexOf(type) >= 0;
+		const idKey = isStructural
+			? [o.source, o.target, type].join("|")
+			: [o.source, o.target, type, evidence && evidence.quote].join("|");
 		return {
-			edgeId: o.edgeId || "E-" + hash([o.source, o.target, o.type, evidence && evidence.quote].join("|")),
+			edgeId: o.edgeId || "E-" + hash(idKey),
 			source: o.source,
 			target: o.target,
-			type: EDGE_TYPES.indexOf(o.type) >= 0 ? o.type : "relates",
+			type: type,
 			label: o.label || "",
 			evidence: evidence,
 			confidence: clampConfidence(o.confidence, 0.6),
@@ -190,13 +220,17 @@ PaperLoom.Schema = (function () {
 		if (!isNonEmptyString(edge.target)) errors.push("target 缺失");
 		if (edge.source === edge.target) errors.push("自环边");
 		if (EDGE_TYPES.indexOf(edge.type) < 0) errors.push("type 非法: " + edge.type);
-		const ev = edge.evidence;
-		if (!ev) {
-			errors.push("缺少 evidence —— 无证据的边不许进图谱");
-		}
-		else {
-			if (!isNonEmptyString(ev.paperId)) errors.push("evidence.paperId 缺失");
-			if (!isNonEmptyString(ev.quote)) errors.push("evidence.quote 缺失");
+		// 结构边（如 belongs_to 的层级归属）表达的是系统派生关系，不要求 evidence；
+		// 论断类边（mentions/relates/supports/contradicts/cites）仍强制带证据，宁缺毋滥。
+		if (STRUCTURAL_EDGE_TYPES.indexOf(edge.type) < 0) {
+			const ev = edge.evidence;
+			if (!ev) {
+				errors.push("缺少 evidence —— 无证据的边不许进图谱");
+			}
+			else {
+				if (!isNonEmptyString(ev.paperId)) errors.push("evidence.paperId 缺失");
+				if (!isNonEmptyString(ev.quote)) errors.push("evidence.quote 缺失");
+			}
 		}
 		return { ok: errors.length === 0, errors: errors };
 	}
@@ -219,10 +253,10 @@ PaperLoom.Schema = (function () {
 	}
 
 	return {
-		SCHEMA_VERSION, SECTIONS, NODE_TYPES, EDGE_TYPES, EDGE_ORIGINS,
+		SCHEMA_VERSION, SECTIONS, NODE_TYPES, EDGE_TYPES, EDGE_ORIGINS, STRUCTURAL_EDGE_TYPES,
 		MEMORY_EVIDENCE_TYPES, INTENTS, LIMITS,
 		nowISO, hash, uid, isNonEmptyString, clampConfidence, normalizeLabel,
-		conceptNodeId, paperNodeId, chunkId,
+		conceptNodeId, paperNodeId, chunkId, topicNodeId,
 		makePaperDoc, makeChunk, makeNode, makeEdge, makeEvidence, makeMemoryFact, makeTurn,
 		validateNode, validateEdge, validateMemoryFact, validateCitation
 	};
