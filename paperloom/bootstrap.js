@@ -539,6 +539,43 @@ function injectReaderButton(reader) {
  * centerscreen 在部分窗口管理器/多屏环境下不生效，窗口会贴在上沿；
  * 这里在打开后再手动纠一次位置。
  */
+/**
+ * 从主窗口侧读取新窗口的几何信息并落盘。
+ * 之所以放在这里：子窗口自己可能拿不到 Zotero / 存储，写不出日志。
+ */
+function probeOpenedWindow(win, w) {
+	const samples = [];
+	let i = 0;
+	const timer = win.setInterval(() => {
+		i++;
+		try {
+			samples.push({
+				t: Date.now(),
+				pos: [w.screenX, w.screenY],
+				outer: [w.outerWidth, w.outerHeight],
+				inner: [w.innerWidth, w.innerHeight],
+				avail: [w.screen.availWidth, w.screen.availHeight],
+				availPos: [w.screen.availLeft, w.screen.availTop],
+				screen: [w.screen.width, w.screen.height],
+				href: String(w.location && w.location.href || "")
+			});
+		}
+		catch (e) { /* 窗口已关闭 */ }
+
+		try {
+			if (PaperLoom && PaperLoom.Storage) {
+				PaperLoom.Storage.writeJSON("windowlog.json", {
+					at: new Date().toISOString(),
+					samples: samples
+				});
+			}
+		}
+		catch (e) { /* ignore */ }
+
+		if (i > 4) win.clearInterval(timer);
+	}, 500);
+}
+
 function centerDialog(win, w, sizes) {
 	if (!w) return;
 
@@ -690,6 +727,7 @@ function openSettings(win) {
 	if (w) {
 		// 位置已由 features 的 left/top + centerscreen 决定。
 		// 这里绝对不能再 resizeTo/moveTo：每次 resize 都会被 Windows 重新吸附到上沿。
+		probeOpenedWindow(win, w);
 		return;
 	}
 
