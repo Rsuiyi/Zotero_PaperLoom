@@ -55,6 +55,7 @@
 	let dragging = null;
 	let panning = null;
 	let box = null;                         // 框选矩形 {x0,y0,x1,y1}
+	let multiSelectMode = false;            // 多选模式：不按修饰键也能连点多选
 
 	const COLORS = {
 		paper: "#2e7fe0",
@@ -100,6 +101,14 @@
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
 		$("pl-graph-add-node").addEventListener("click", addConcept);
 		$("pl-graph-del").addEventListener("click", deleteSelection);
+
+		// 多选模式：有些环境里 Shift 修饰键传不到 iframe，给一个不依赖修饰键的入口
+		$("pl-graph-multi").addEventListener("click", () => {
+			multiSelectMode = !multiSelectMode;
+			$("pl-graph-multi").textContent = "多选：" + (multiSelectMode ? "开" : "关");
+			$("pl-graph-multi").style.background = multiSelectMode ? "var(--pl-accent)" : "";
+			$("pl-graph-multi").style.color = multiSelectMode ? "#fff" : "";
+		});
 
 		// 键盘删除：焦点可能停在外层窗口，所以 window 和 document 都捕获
 		const onKeyDown = (ev) => {
@@ -582,7 +591,8 @@
 		}
 
 		if (node) {
-			if (ev.shiftKey) {
+			const multi = ev.shiftKey || ev.ctrlKey || ev.metaKey || multiSelectMode;
+			if (multi) {
 				// shift 点选：加入 / 移出多选
 				if (selection.has(node.nodeId)) selection.delete(node.nodeId);
 				else selection.add(node.nodeId);
