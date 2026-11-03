@@ -409,6 +409,21 @@ function section(t) { console.log("\n" + t); }
 			PL.Compat.describe());
 	}
 
+	section("12. 模型目录（不依赖网络的兜底）");
+	{
+		const deepseek = PL.LLM.modelSuggestions({ baseURL: "https://api.deepseek.com/v1" });
+		check("DeepSeek 内置目录非空", deepseek.length >= 2, JSON.stringify(deepseek));
+		check("★ 内置目录使用 v4 模型（旧 deepseek-chat 已过时）",
+			deepseek.every(m => /^deepseek-v4/.test(m)), JSON.stringify(deepseek));
+
+		const unknown = PL.LLM.modelSuggestions({ baseURL: "https://example.com/v1" });
+		check("未知供应商不编造模型", unknown.length === 0, JSON.stringify(unknown));
+
+		// 表单值必须覆盖已保存偏好，否则"刚填的 Key"点按钮不会生效
+		const withForm = PL.LLM.config({ baseURL: "https://api.deepseek.com/v1", apiKey: "sk-form-value" });
+		check("★ config 接受表单值覆盖偏好", withForm.apiKey === "sk-form-value", withForm.apiKey);
+	}
+
 	console.log("\n" + "=".repeat(50));
 	console.log("通过 " + pass + " 项，失败 " + fail + " 项");
 	console.log("=".repeat(50));

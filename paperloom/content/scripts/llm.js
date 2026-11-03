@@ -23,13 +23,28 @@ PaperLoom.LLM = (function () {
 		}
 	}
 
-	function config() {
-		const base = String(pref("apiBase", "https://api.deepseek.com/v1")).replace(/\/+$/, "");
+	/**
+	 * 读取运行配置。
+	 * overrides 允许调用方（例如设置界面）传入**表单里当前输入的值**，
+	 * 而不是只能用已保存的偏好 —— PDF2zh 的「获取模型列表」就是这么做的：
+	 * 先填 Key 和 Base URL，点按钮，立刻用这两个值去查。
+	 */
+	function config(overrides) {
+		overrides = overrides || {};
+		const rawBase = (overrides.baseURL !== undefined && overrides.baseURL !== null && overrides.baseURL !== "")
+			? overrides.baseURL
+			: pref("apiBase", "https://api.deepseek.com/v1");
+		const base = String(rawBase).trim().replace(/\/+$/, "");
+
+		const apiKey = (overrides.apiKey !== undefined && overrides.apiKey !== null)
+			? String(overrides.apiKey).trim()
+			: String(pref("apiKey", "")).trim();
+
 		return {
 			baseURL: base,
-			apiKey: String(pref("apiKey", "")),
-			chatModel: String(pref("chatModel", "deepseek-chat")),
-			extractModel: String(pref("extractModel", "deepseek-chat")),
+			apiKey: apiKey,
+			chatModel: String(overrides.chatModel || pref("chatModel", "deepseek-v4-pro")),
+			extractModel: String(overrides.extractModel || pref("extractModel", "deepseek-v4-flash")),
 			maxTokens: Math.max(S.LIMITS.llmMinMaxTokens, parseInt(pref("maxTokens", 4096), 10) || 4096),
 			temperature: parseFloat(pref("temperature", 0.3)),
 			timeoutMs: parseInt(pref("timeoutMs", 90000), 10) || 90000,
@@ -179,8 +194,8 @@ PaperLoom.LLM = (function () {
 	}
 
 	/** 当前 base URL 对应的内置模型（不联网，随叫随到） */
-	function modelSuggestions() {
-		return (MODEL_CATALOG[detectProvider(config().baseURL)] || []).slice();
+	function modelSuggestions(overrides) {
+		return (MODEL_CATALOG[detectProvider(config(overrides).baseURL)] || []).slice();
 	}
 
 	/** base URL 归一化：去掉尾部斜杠 */
@@ -242,14 +257,15 @@ PaperLoom.LLM = (function () {
 	 * 没有 Key 或接口失败时返回内置目录而不是抛错 —— 下拉框永远有东西可选。
 	 */
 	/** 给返回数组挂一个 source 标记，UI 能区分"真的拉到了"还是"只是内置目录" */
-	function tagged(list, source) {
+	function tagged(list, source, extra) {
 		list.source = source;
+		if (extra) Object.assign(list, extra);
 		return list;
 	}
 
-	async function listModels() {
-		const cfg = config();
-		const suggested = modelSuggestions();
+	async function listModels(overrides) {
+		const cfg = config(overrides);
+		const suggested = modelSuggestions(overrides);
 
 		if (!cfg.apiKey) {
 			return tagged(suggested, "catalog");
@@ -280,7 +296,12 @@ PaperLoom.LLM = (function () {
 			}
 		}
 
-		if (suggested.length) return tagged(suggested, "catalog-error");
+		if (suggested.length) {
+			return tagged(suggested, "catalog-error", {
+				error: String((lastError && lastError.message) || lastError || "未知错误"),
+				tried: urls
+			});
+		}
 		throw lastError || new Error("模型列表接口不可用");
 	}
 
@@ -288,8 +309,8 @@ PaperLoom.LLM = (function () {
 	 * 连通性自检：只验证「接口通、鉴权对、模型名有效」，不关心模型说什么。
 	 * 故意用 max_tokens=16，避免为一次测试烧掉一整轮对话的额度。
 	 */
-	async function testConnection() {
-		const cfg = config();
+	async function testConnection(overrides) {
+		const cfg = config(overrides);
 		if (!cfg.apiKey) {
 			return { ok: false, error: "尚未填写 API Key" };
 		}

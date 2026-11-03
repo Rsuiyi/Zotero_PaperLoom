@@ -137,14 +137,39 @@
 		sel.value = current && values.includes(current) ? current : "";
 	}
 
+	/** 表单当前值：拉取时必须用它，而不是"上次保存的偏好" */
+	function formConfig() {
+		return {
+			baseURL: $("apiBase").value.trim(),
+			apiKey: $("apiKey").value.trim(),
+			chatModel: $("chatModel").value.trim(),
+			extractModel: $("extractModel").value.trim()
+		};
+	}
+
 	async function pullModels(silent) {
 		if (!PL || !PL.LLM) {
 			if (!silent) setStatus("领域层未加载，无法拉取模型列表", "err");
 			return;
 		}
-		if (!silent) setStatus("正在拉取模型列表…", "busy");
+
+		const cfg = formConfig();
+		if (!cfg.apiKey) {
+			// 没有 Key 时仍展示内置目录，但要说清楚"这不是接口返回的"
+			const cat = PL.LLM.modelSuggestions(cfg);
+			fillSelect($("chatModelSel"), cat, cfg.chatModel);
+			fillSelect($("extractModelSel"), cat, cfg.extractModel);
+			if (!silent) {
+				setStatus(cat.length
+					? "请先填写 API Key；当前仅显示内置目录（" + cat.length + " 个）"
+					: "请先填写 API Key 与 Base URL", "err");
+			}
+			return;
+		}
+
+		if (!silent) setStatus("正在向 " + cfg.baseURL + " 请求模型列表…", "busy");
 		try {
-			const models = await PL.LLM.listModels();
+			const models = await PL.LLM.listModels(cfg);
 			const chat = $("chatModel").value;
 			const extract = $("extractModel").value;
 			fillSelect($("chatModelSel"), models || [], chat);
@@ -163,7 +188,10 @@
 					setStatus("接口没有返回模型，已用内置目录（" + models.length + " 个）", "ok");
 				}
 				else if (src === "catalog-error") {
-					setStatus("接口请求失败，已退回内置目录（" + models.length + " 个）", "err");
+					const tried = (models.tried && models.tried[0]) || "";
+					setStatus("接口请求失败：" + (models.error || "未知错误")
+						+ (tried ? "（" + tried + "）" : "")
+						+ "；已退回内置目录", "err");
 				}
 				else {
 					setStatus("已载入内置目录（" + models.length + " 个）；填 Key 后可拉接口列表", "ok");
@@ -217,7 +245,12 @@
 
 		$("btn-save").addEventListener("click", save);
 		$("btn-test").addEventListener("click", test);
-		$("btn-models").addEventListener("click", () => pullModels(false));
+		// 点"拉取模型列表"时先把表单存下来：用户刚填的 Key/Base 必须被持久化，
+		// 否则后续对话仍用旧配置（PDF2zh 也是这个行为）
+		$("btn-models").addEventListener("click", () => {
+			save();
+			pullModels(false);
+		});
 		if ($("btn-close")) $("btn-close").addEventListener("click", () => window.close());
 
 		$("btn-eye").addEventListener("click", () => {
