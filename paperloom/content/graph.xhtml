@@ -15,9 +15,13 @@
 			<input type="checkbox" id="pl-cross-only" />
 			<span>只显示跨论文概念</span>
 		</label>
-		<label class="pl-row" title="按概念所属主题着色，相近主题归为一色">
-			<input type="checkbox" id="pl-topic-color" checked="checked" />
-			<span>按主题着色</span>
+		<label class="pl-row" title="选择概念节点的着色依据">
+			<span>着色</span>
+			<select id="pl-color-mode">
+				<option value="topic" selected="selected">按主题</option>
+				<option value="paper">按来源论文</option>
+				<option value="none">默认</option>
+			</select>
 		</label>
 		<button id="pl-graph-rebuild-topics" title="按概念间的论断关系重新划分主题层">重建主题</button>
 		<label class="pl-row">

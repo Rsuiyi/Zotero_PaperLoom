@@ -65,6 +65,7 @@
 		claim: "#8a5cd6",
 		edge: "rgba(130,130,140,0.45)",
 		edgeHighlight: "#2e7fe0",
+		sourceLink: "#F45D01",
 		contradicts: "#d0342c",
 		supports: "#2d9c5a"
 	};
@@ -78,6 +79,20 @@
 		if (!(topicId in _topicColorMap)) { _topicColorMap[topicId] = TOPIC_PALETTE[_topicColorN % TOPIC_PALETTE.length]; _topicColorN++; }
 		return _topicColorMap[topicId];
 	}
+
+	// 来源论文调色板：按 paperId 稳定分配一种颜色，让概念一眼看出来自哪篇
+	const PAPER_PALETTE = ["#2D7DD2", "#F45D01", "#59A96A", "#8E44AD", "#C0392B", "#16A085", "#D4A017", "#2C3E50", "#C2185B", "#00838F"];
+	const _paperColorMap = Object.create(null);
+	let _paperColorN = 0;
+	function colorForPaper(paperId) {
+		if (!paperId) return "#95A5A6";
+		const key = String(paperId);
+		if (!(key in _paperColorMap)) { _paperColorMap[key] = PAPER_PALETTE[_paperColorN % PAPER_PALETTE.length]; _paperColorN++; }
+		return _paperColorMap[key];
+	}
+
+	// 着色方式：topic（按主题）| paper（按来源论文）| none（默认跨论文绿色）
+	let colorMode = "topic";
 
 	document.addEventListener("DOMContentLoaded", init);
 	if (document.readyState !== "loading") init();
@@ -108,7 +123,10 @@
 
 		$("pl-cross-only").addEventListener("change", rebuildView);
 		$("pl-show-papers").addEventListener("change", rebuildView);
-		if ($("pl-topic-color")) $("pl-topic-color").addEventListener("change", () => draw());
+		if ($("pl-color-mode")) {
+			colorMode = $("pl-color-mode").value || "topic";
+			$("pl-color-mode").addEventListener("change", (ev) => { colorMode = ev.target.value || "topic"; draw(); });
+		}
 		if ($("pl-graph-rebuild-topics")) $("pl-graph-rebuild-topics").addEventListener("click", rebuildTopicsAction);
 		$("pl-graph-refresh").addEventListener("click", load);
 		$("pl-graph-fit").addEventListener("click", () => { fit(); draw(); });
@@ -453,6 +471,43 @@
 		try { window.alert(text); } catch (e) { /* ignore */ }
 	}
 
+	/**
+	 * 选中节点 → 需要即时画出的「概念—来源论文」连线对。
+	 * 概念的来源存在 node.paperIds；论文节点 id = paperNodeId(pid)。
+	 * 双向：选中概念连到它的来源论文；选中论文连到以它为来源的所有概念。
+	 * 只返回当前视图里实际存在的两端（论文节点可能被开关隐藏）。
+	 */
+	function computeSourceLinks(byId) {
+		if (!selection.size) return [];
+		const links = [];
+		const seen = new Set();
+		const addLink = (concept, paper) => {
+			if (!concept || !paper) return;
+			const key = concept.nodeId + "|" + paper.nodeId;
+			if (seen.has(key)) return;
+			seen.add(key);
+			links.push({ concept, paper });
+		};
+		for (const id of selection) {
+			const n = byId[id];
+			if (!n) continue;
+			if (n.type === "concept") {
+				for (const pid of n.paperIds || []) {
+					addLink(n, byId[PL.Schema.paperNodeId(pid)]);
+				}
+			}
+			else if (n.type === "paper") {
+				const pid = (n.paperIds && n.paperIds[0]) || String(n.nodeId).replace(/^P-/, "");
+				for (const c of view.nodes) {
+					if (c.type === "concept" && (c.paperIds || []).map(String).indexOf(String(pid)) >= 0) {
+						addLink(c, n);
+					}
+				}
+			}
+		}
+		return links;
+	}
+
 	function draw() {
 		const w = wrap.clientWidth || 800;
 		const h = wrap.clientHeight || 600;
@@ -466,6 +521,12 @@
 		for (const e of view.edges) {
 			if (selection.has(e.source)) highlightIds.add(e.target);
 		}
+
+		// ★ 来源连线（概念↔来源论文，双向、即时、不入库）：
+		//   选中概念 → 连到它每篇来源论文；选中论文 → 连到图中以它为来源的所有概念。
+		//   对端节点也纳入高亮，确保论文/概念都显示标签、不被暗化。
+		const sourceLinks = computeSourceLinks(byId);
+		for (const lk of sourceLinks) { highlightIds.add(lk.concept.nodeId); highlightIds.add(lk.paper.nodeId); }
 
 		// 边
 		for (const e of view.edges) {
@@ -500,21 +561,47 @@
 			ctx.fill();
 		}
 
+		// ★ 动态来源连线：选中概念/论文时即时画出"概念—来源论文"的高亮虚线。
+		//   不是图里的持久边，只在有选择时出现，松开即消失。
+		if (sourceLinks.length) {
+			ctx.save();
+			ctx.setLineDash([6, 4]);
+			ctx.lineWidth = 2;
+			ctx.strokeStyle = COLORS.sourceLink;
+			for (const lk of sourceLinks) {
+				const pc = toScreen(lk.concept), pp = toScreen(lk.paper);
+				ctx.beginPath();
+				ctx.moveTo(pc.x, pc.y);
+				ctx.lineTo(pp.x, pp.y);
+				ctx.stroke();
+			}
+			ctx.restore();
+		}
+
 		// 节点
-		const topicColorOn = ($("pl-topic-color") || {}).checked;
 		for (const n of view.nodes) {
 			const p = toScreen(n);
 			const r = nodeRadius(n) * camera.scale;
 			const cross = n.type === "concept" && (n.paperIds || []).length >= 2;
 			let color;
+			let paperRing = null;   // 来源模式下跨论文概念的描边色
 			if (n.type === "topic") {
 				color = colorForTopic(n.nodeId) || "#7f8c8d";
 			} else if (n.type === "paper") {
-				color = COLORS.paper;
+				color = colorMode === "paper" ? colorForPaper((n.paperIds || [])[0] || n.nodeId) : COLORS.paper;
 			} else if (n.type === "claim") {
 				color = COLORS.claim;
-			} else if (topicColorOn && n.topicId) {
-				// 按主题着色：同主题概念同色；跨论文概念加白描边另行强调
+			} else if (colorMode === "paper") {
+				// 按来源论文着色：单篇概念填充其来源色；跨论文概念白底 + 粗彩描边区分"共享"
+				const pids = n.paperIds || [];
+				if (cross) {
+					color = "#ffffff";
+					paperRing = colorForPaper(pids[0]);
+				} else {
+					color = colorForPaper(pids[0]);
+				}
+			} else if (colorMode === "topic" && n.topicId) {
+				// 按主题着色：同主题概念同色
 				color = colorForTopic(n.topicId);
 			} else {
 				color = cross ? COLORS.crossConcept : COLORS.concept;
@@ -536,6 +623,12 @@
 			}
 			ctx.fillStyle = color;
 			ctx.fill();
+			// 来源模式下跨论文概念：粗彩描边，白底 + 彩边 = 一眼看出"共享知识点"
+			if (paperRing) {
+				ctx.lineWidth = 3;
+				ctx.strokeStyle = paperRing;
+				ctx.stroke();
+			}
 			if (selection.has(n.nodeId)) {
 				// 光晕 + 双层描边，确保一眼看出被选中
 				ctx.save();
@@ -886,10 +979,68 @@
 		}
 		box.appendChild(head);
 
+		// ★ 来源论文清单：直接回答「这个概念来自哪些论文」。
+		// 数据全部从已加载的 graph 现成取：node.paperIds → paper 节点 label；
+		// 各篇的原文证据从与本概念相连、evidence.paperId 命中该篇的边里挑一条 quote。
+		const nodeById = Object.create(null);
+		for (const n of graph.nodes) nodeById[n.nodeId] = n;
+		const incident = graph.edges.filter(e => e.source === node.nodeId || e.target === node.nodeId);
+
+		if (node.type === "concept") {
+			const srcCard = document.createElement("div");
+			srcCard.className = "pl-evidence-card";
+
+			const sh = document.createElement("h4");
+			const srcPids = node.paperIds || [];
+			sh.textContent = "来源论文（" + srcPids.length + "）";
+			srcCard.appendChild(sh);
+
+			if (!srcPids.length) {
+				const empty = document.createElement("div");
+				empty.className = "pl-muted";
+				empty.textContent = "暂无来源论文记录。";
+				srcCard.appendChild(empty);
+			}
+			else {
+				for (const pid of srcPids) {
+					const paperNode = nodeById[PL.Schema.paperNodeId(pid)];
+					const row = document.createElement("div");
+					row.className = "pl-source-paper";
+
+					const dot = document.createElement("span");
+					dot.className = "pl-source-dot";
+					dot.style.background = colorForPaper(pid);
+					row.appendChild(dot);
+
+					const name = document.createElement("span");
+					name.className = "pl-source-name";
+					name.textContent = (paperNode && paperNode.label) || ("论文 " + pid);
+					row.appendChild(name);
+
+					// 该篇里支撑此概念的一条原文证据（有就带页码跳转）
+					const ev = findEvidenceForPaper(incident, pid);
+					const jump = document.createElement("button");
+					jump.className = "pl-source-jump";
+					jump.textContent = "打开" + (ev && ev.page ? " · p." + ev.page : "");
+					jump.addEventListener("click", () => jumpTo(pid, ev ? ev.page : 1));
+					row.appendChild(jump);
+
+					srcCard.appendChild(row);
+
+					if (ev && ev.quote) {
+						const q = document.createElement("div");
+						q.className = "pl-evidence-quote pl-source-quote";
+						q.textContent = "“" + String(ev.quote).slice(0, 160) + "”";
+						srcCard.appendChild(q);
+					}
+				}
+			}
+			box.appendChild(srcCard);
+		}
+
 		// 相关边 → 每条边一张证据卡（原文摘录 + 页码 + 跳转）
-		const related = graph.edges.filter(e => e.source === node.nodeId || e.target === node.nodeId);
-		const byId = Object.create(null);
-		for (const n of graph.nodes) byId[n.nodeId] = n;
+		const related = incident;
+		const byId = nodeById;
 
 		if (!related.length) {
 			const empty = document.createElement("div");
@@ -955,6 +1106,19 @@
 
 	function typeLabel(t) {
 		return { paper: "论文", concept: "概念", claim: "论断" }[t] || t;
+	}
+
+	/** 从与某概念相连的边里，挑一条 evidence 属于指定论文的记录（优先带 quote 的） */
+	function findEvidenceForPaper(edges, paperId) {
+		const pid = String(paperId);
+		let fallback = null;
+		for (const e of edges || []) {
+			const ev = e.evidence;
+			if (!ev || String(ev.paperId) !== pid) continue;
+			if (ev.quote) return ev;
+			if (!fallback) fallback = ev;
+		}
+		return fallback;
 	}
 
 	function edgeTypeLabel(t) {
