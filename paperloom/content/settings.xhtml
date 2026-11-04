@@ -145,6 +145,13 @@
 		<div class="desc">推理模型的 reasoning token 也计入 completion，给小了会出现空回答。</div>
 
 		<div class="row">
+			<label for="contextBudget">上下文预算（字符）</label>
+			<input type="number" id="contextBudget" min="20000" step="10000" style="max-width:160px" />
+			<span class="unit">默认 200000，约 6 万 token</span>
+		</div>
+		<div class="desc">单篇论文最多送入多少字符。越大越完整，但更慢更贵。</div>
+
+		<div class="row">
 			<label for="temperature">temperature</label>
 			<input type="text" id="temperature" style="max-width:120px" />
 			<span class="unit">0–2，问答建议 0.2–0.5</span>

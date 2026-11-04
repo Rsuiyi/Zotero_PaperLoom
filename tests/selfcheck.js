@@ -317,6 +317,16 @@ function section(t) { console.log("\n" + t); }
 		check("system 要求 JSON 输出", msgs[0].content.includes("citations") && msgs[0].content.includes("graph_delta"));
 		check("system 写明跨篇不硬凑", msgs[0].content.includes("只有一篇相关文献"));
 
+		// 多轮：历史问答必须作为真实消息进入 messages
+		const withHistory = PL.Pipeline.buildMessages({
+			query: "再具体说说方法", intent: "single_fact", memoryFacts: [], titles: {},
+			currentHits: [], libraryHits: [], graphContext: {}, existingNodes: [],
+			history: [{ query: "这篇讲了什么", answer: "它提出了 AdaGReS" }]
+		});
+		check("★ 历史问答进入 messages",
+			withHistory.some(m => m.role === "assistant" && m.content.includes("AdaGReS")),
+			JSON.stringify(withHistory.map(m => m.role)));
+
 		const delta = PL.Pipeline.normalizeGraphDelta(
 			{ nodes: [{ type: "concept", label: "注意力" }], edges: [{ sourceLabel: "a", targetLabel: "b", type: "relates" }] },
 			{ focusDocs: [{ paperId: "PAPER001", title: "甲论文" }], titles: {} }

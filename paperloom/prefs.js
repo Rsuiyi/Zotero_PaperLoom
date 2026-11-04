@@ -27,6 +27,8 @@ pref("extensions.paperloom.reasoningEffort", "");
 
 // ⚠ 必须 ≥ 4096：推理模型的 reasoning token 计入 completion，给小了会出现 content 为空。
 pref("extensions.paperloom.maxTokens", 4096);
+// 单篇论文送进 prompt 的字符预算（越大越完整，但更慢更贵）
+pref("extensions.paperloom.contextBudget", 200000);
 pref("extensions.paperloom.temperature", "0.3");
 pref("extensions.paperloom.timeoutMs", 90000);
 // 所有 LLM 结果按 hash(prompt) 落盘缓存，开发期反复调试不烧钱

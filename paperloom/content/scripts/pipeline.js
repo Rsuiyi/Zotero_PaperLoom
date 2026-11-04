@@ -151,10 +151,18 @@ PaperLoom.Pipeline = (function () {
 			? ANSWER_CONTRACT + "\n\n## 用户自定义系统提示词（可覆盖回答风格，但不得违反上面的证据与引用规则）\n" + extra
 			: ANSWER_CONTRACT;
 
-		return [
-			{ role: "system", content: system },
-			{ role: "user", content: sections.join("\n\n") + "\n\n## 用户问题\n" + ctx.query }
-		];
+		const messages = [{ role: "system", content: system }];
+
+		// ★ 多轮上下文：把最近几轮问答作为真实消息发回去，
+		//   否则"那它的方法呢""第二点再说说"这类追问模型完全接不上。
+		for (const h of (ctx.history || [])) {
+			if (!h || !h.query) continue;
+			messages.push({ role: "user", content: String(h.query) });
+			messages.push({ role: "assistant", content: String(h.answer || "").slice(0, 6000) });
+		}
+
+		messages.push({ role: "user", content: sections.join("\n\n") + "\n\n## 用户问题\n" + ctx.query });
+		return messages;
 	}
 
 	// -------------------------------------------------------------- 当前论文直读
@@ -241,6 +249,13 @@ PaperLoom.Pipeline = (function () {
 			warnings.push("当前论文的页码来源是「" + currentDoc.textSource + "」，引用页码可能不精确。");
 		}
 
+		// ---- 1.5 最近对话（多轮上下文）
+		let history = [];
+		try {
+			history = await recentTurns(opts.item ? opts.item.key : null, 8);
+		}
+		catch (e) { /* 历史读不出来不影响本轮 */ }
+
 		// ---- 2 意图判定
 		const intent = PaperLoom.Retriever.classifyIntent(query, {
 			referencedPaperCount: focusDocs.length
@@ -280,7 +295,14 @@ PaperLoom.Pipeline = (function () {
 		const docsWithText = focusDocs.filter(d => (d.chunks || []).length);
 		if (docsWithText.length) {
 			// 约 4 万字符 ≈ 1.2 万 token，普通论文可整篇放入；多篇时平摊
-			const perDocBudget = Math.floor(40000 / docsWithText.length);
+			// 默认 20 万字符（≈6 万 token）：普通论文可整篇放入；可在设置里调整
+			let ctxBudget = 200000;
+			try {
+				const v = parseInt(Zotero.Prefs.get("extensions.paperloom.contextBudget", true), 10);
+				if (Number.isFinite(v) && v > 0) ctxBudget = v;
+			}
+			catch (e) { /* 用默认值 */ }
+			const perDocBudget = Math.max(20000, Math.floor(ctxBudget / docsWithText.length));
 			const direct = [];
 			for (const d of docsWithText) {
 				for (const c of directChunks(d.chunks, perDocBudget)) {
@@ -343,6 +365,7 @@ PaperLoom.Pipeline = (function () {
 		// ---- 4 组装 prompt 并调用 LLM
 		const ctx = {
 			query, intent, memoryFacts, titles,
+			history: history.map(t => ({ query: t.query, answer: t.answer })),
 			currentHits, libraryHits, graphContext, existingNodes,
 			currentPaperId: currentDoc ? currentDoc.paperId : null,
 			currentPaperTitle: currentDoc ? currentDoc.title : null

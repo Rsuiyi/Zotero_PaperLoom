@@ -122,6 +122,7 @@
 		$("dataDir").value = String(prefGet("dataDir", ""));
 		$("systemPrompt").value = String(prefGet("systemPrompt", ""));
 		$("fontSize").value = String(prefGet("fontSize", 13));
+		$("contextBudget").value = String(prefGet("contextBudget", 200000));
 		renderEffortSeg();
 
 		try {
@@ -148,6 +149,9 @@
 
 		const font = parseInt($("fontSize").value, 10);
 		if (Number.isFinite(font)) prefSet("fontSize", Math.max(10, Math.min(22, font)));
+
+		const budget = parseInt($("contextBudget").value, 10);
+		if (Number.isFinite(budget)) prefSet("contextBudget", Math.max(20000, budget));
 
 		setStatus("已保存", "ok");
 	}
