@@ -123,6 +123,8 @@
 		$("systemPrompt").value = String(prefGet("systemPrompt", ""));
 		$("fontSize").value = String(prefGet("fontSize", 13));
 		$("contextBudget").value = String(prefGet("contextBudget", 200000));
+		$("pageImages").checked = prefGet("pageImages", false) === true;
+		$("pageImageMax").value = String(prefGet("pageImageMax", 6));
 		renderEffortSeg();
 
 		try {
@@ -152,6 +154,10 @@
 
 		const budget = parseInt($("contextBudget").value, 10);
 		if (Number.isFinite(budget)) prefSet("contextBudget", Math.max(20000, budget));
+
+		prefSet("pageImages", !!$("pageImages").checked);
+		const maxPages = parseInt($("pageImageMax").value, 10);
+		if (Number.isFinite(maxPages)) prefSet("pageImageMax", Math.max(1, Math.min(20, maxPages)));
 
 		setStatus("已保存", "ok");
 	}

@@ -80,6 +80,20 @@ PaperLoom.LLM = (function () {
 	}
 
 	let _lastUsage = null;
+	function hasImageContent(messages) {
+		return (messages || []).some(m => Array.isArray(m.content)
+			&& m.content.some(p => p && p.type === "image_url"));
+	}
+
+	function stripImages(messages) {
+		return (messages || []).map(m => {
+			if (!Array.isArray(m.content)) return m;
+			const text = m.content.filter(p => p && p.type === "text")
+				.map(p => p.text || "").join(" ");
+			return Object.assign({}, m, { content: text });
+		});
+	}
+
 	let _lastWarning = null;
 
 	/** 最近一次请求的用量（没拿到 usage 时为 null） */
@@ -453,9 +467,11 @@ PaperLoom.LLM = (function () {
 		Object.assign(payload, reasoningParam(effort, model));
 		_lastWarning = null;
 
+		// 带页面截图时不走本地缓存：key 会包含几 MB 的 base64，且几乎不会重复命中
+		const useCache = cfg.useCache && !hasImageContent(opts.messages);
 		const cacheKey = S.hash(target.baseURL + "|" + model + "|" + JSON.stringify(payload.messages) + "|" + maxTokens + "|" + (opts.json ? "json" : "text"));
 
-		if (cfg.useCache) {
+		if (useCache) {
 			const cached = await PaperLoom.Storage.readCache(cacheKey);
 			if (cached !== null) {
 				try {
@@ -478,21 +494,30 @@ PaperLoom.LLM = (function () {
 			data = await postJSON(url, headers, payload, cfg.timeoutMs);
 		}
 		catch (e) {
-			// 服务商不支持 reasoning_effort / thinking 时通常会回 400。
-			// 这里自动去掉这两个参数重试一次，保证"选了推理强度"不会把整个对话搞挂。
+			// 400 通常是请求体里有服务商不认识的字段：依次去掉推理参数、图片后重试
 			const msg = String((e && e.message) || e);
-			const hasReasoning = payload.reasoning_effort || payload.thinking;
-			if (hasReasoning && /\b400\b/.test(msg)) {
-				log("服务商拒绝 reasoning 参数，已去掉后重试：" + msg.slice(0, 160));
-				_lastWarning = "当前服务商不接受推理强度参数，本轮已自动忽略（可在设置里切回「自动」）。";
-				const retryPayload = Object.assign({}, payload);
+			if (msg.indexOf("400") < 0) throw e;
+
+			let retryPayload = Object.assign({}, payload);
+			let changed = false;
+
+			if (retryPayload.reasoning_effort || retryPayload.thinking) {
 				delete retryPayload.reasoning_effort;
 				delete retryPayload.thinking;
-				data = await postJSON(url, headers, retryPayload, cfg.timeoutMs);
+				changed = true;
+				_lastWarning = "当前服务商不接受推理强度参数，本轮已自动忽略。";
 			}
-			else {
-				throw e;
+
+			if (hasImageContent(retryPayload.messages)) {
+				retryPayload.messages = stripImages(retryPayload.messages);
+				changed = true;
+				_lastWarning = (_lastWarning ? _lastWarning + " " : "") + "当前模型/接口不支持图片输入，本轮已退回纯文本。";
 			}
+
+			if (!changed) throw e;
+
+			log("服务商返回 400，去掉不支持的参数后重试");
+			data = await postJSON(url, headers, retryPayload, cfg.timeoutMs);
 		}
 
 		_lastUsage = extractUsage(data);
@@ -510,7 +535,7 @@ PaperLoom.LLM = (function () {
 			throw new Error("LLM 返回空 content（finish_reason=" + reason + "）");
 		}
 
-		if (cfg.useCache) {
+		if (useCache) {
 			try {
 				await PaperLoom.Storage.writeCache(cacheKey, JSON.stringify({
 					content: content, model: model, provider: target.providerName, at: S.nowISO()

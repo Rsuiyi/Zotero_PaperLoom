@@ -323,6 +323,16 @@ function section(t) { console.log("\n" + t); }
 			currentHits: [], libraryHits: [], graphContext: {}, existingNodes: [],
 			history: [{ query: "这篇讲了什么", answer: "它提出了 AdaGReS" }]
 		});
+		const withImages = PL.Pipeline.buildMessages({
+			query: "看图解释公式", intent: "single_fact", memoryFacts: [], titles: {},
+			currentHits: [], libraryHits: [], graphContext: {}, existingNodes: [],
+			pageImages: ["data:image/jpeg;base64,AAAA"]
+		});
+		const lastMsg = withImages[withImages.length - 1];
+		check("★ 页面截图进入 user content 数组",
+			Array.isArray(lastMsg.content) && lastMsg.content.some(p => p.type === "image_url"),
+			JSON.stringify(lastMsg.content && lastMsg.content.map(p => p.type)));
+
 		check("★ 历史问答进入 messages",
 			withHistory.some(m => m.role === "assistant" && m.content.includes("AdaGReS")),
 			JSON.stringify(withHistory.map(m => m.role)));

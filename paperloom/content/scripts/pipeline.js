@@ -161,7 +161,17 @@ PaperLoom.Pipeline = (function () {
 			messages.push({ role: "assistant", content: String(h.answer || "").slice(0, 6000) });
 		}
 
-		messages.push({ role: "user", content: sections.join("\n\n") + "\n\n## 用户问题\n" + ctx.query });
+		const NL = String.fromCharCode(10);
+		const userText = sections.join(NL + NL) + NL + NL + "## 用户问题" + NL + ctx.query;
+		const images = ctx.pageImages || [];
+
+		// 多模态：附带页面截图时，content 变成 文本 + image_url 数组
+		const userContent = images.length
+			? [{ type: "text", text: userText + NL + NL + "## 页面截图" + NL + "以上附带 " + images.length + " 张论文页面截图，可用来读取公式、图表与版面信息。" }]
+				.concat(images.map((url) => ({ type: "image_url", image_url: { url: url } })))
+			: userText;
+
+		messages.push({ role: "user", content: userContent });
 		return messages;
 	}
 
@@ -367,6 +377,7 @@ PaperLoom.Pipeline = (function () {
 			query, intent, memoryFacts, titles,
 			history: history.map(t => ({ query: t.query, answer: t.answer })),
 			currentHits, libraryHits, graphContext, existingNodes,
+			pageImages: opts.pageImages || [],
 			currentPaperId: currentDoc ? currentDoc.paperId : null,
 			currentPaperTitle: currentDoc ? currentDoc.title : null
 		};

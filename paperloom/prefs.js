@@ -29,6 +29,10 @@ pref("extensions.paperloom.reasoningEffort", "");
 pref("extensions.paperloom.maxTokens", 4096);
 // 单篇论文送进 prompt 的字符预算（越大越完整，但更慢更贵）
 pref("extensions.paperloom.contextBudget", 200000);
+// 多模态：把 PDF 页面渲染成图片一起发送（需要模型支持图像输入）
+pref("extensions.paperloom.pageImages", false);
+// 最多发送多少页截图（每页约 150KB，注意接口体积限制）
+pref("extensions.paperloom.pageImageMax", 6);
 pref("extensions.paperloom.temperature", "0.3");
 pref("extensions.paperloom.timeoutMs", 90000);
 // 所有 LLM 结果按 hash(prompt) 落盘缓存，开发期反复调试不烧钱

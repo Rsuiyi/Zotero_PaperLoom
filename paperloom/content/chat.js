@@ -310,10 +310,28 @@
 
 		const pending = renderPending();
 
+		// 多模态截图：开启时把论文前 N 页渲染成图片，随文本一起发送
+		let pageImages = [];
+		if (mode !== "library" && askItem) {
+			try {
+				const enabled = Zotero.Prefs.get("extensions.paperloom.pageImages", true) === true;
+				if (enabled) {
+					const maxPages = parseInt(Zotero.Prefs.get("extensions.paperloom.pageImageMax", true), 10) || 6;
+					pending.textContent = "正在渲染页面截图…";
+					pageImages = await capturePageImages(askItem, maxPages);
+					pending.textContent = pageImages.length
+						? ("已捕获 " + pageImages.length + " 页截图，生成中…")
+						: "生成中…";
+				}
+			}
+			catch (e) { /* 截图失败就退回纯文本 */ }
+		}
+
 		try {
 			const result = await PL.Pipeline.ask({
 				query: stripRefMarkers(query),
 				item: askItem,
+				pageImages: pageImages,
 				referencedItems: referenced.slice(),
 				onProgress: (stage, info) => {
 					pending.textContent = stageLabel(stage, info);
@@ -839,6 +857,103 @@
 		catch (e) {
 			showError("跳转失败：" + e);
 		}
+	}
+
+	// ------------------------------------------------------------ 页面截图（多模态）
+
+	function readerBelongsTo(reader, item) {
+		try {
+			const att = Zotero.Items.get(reader.itemID);
+			if (!att) return false;
+			const parent = att.parentItemID ? Zotero.Items.get(att.parentItemID) : att;
+			return !!(parent && item && parent.key === item.key);
+		}
+		catch (e) { return false; }
+	}
+
+	function findReaderForPaper(item) {
+		try {
+			const win = Zotero.getMainWindow ? Zotero.getMainWindow() : null;
+			const tabs = win && win.Zotero_Tabs;
+			if (tabs && tabs.selectedID && Zotero.Reader.getByTabID) {
+				const active = Zotero.Reader.getByTabID(tabs.selectedID);
+				if (active && readerBelongsTo(active, item)) return active;
+			}
+			const readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+			return readers.find(r => readerBelongsTo(r, item)) || null;
+		}
+		catch (e) { return null; }
+	}
+
+	function waitForPageCanvas(doc, pageNo, timeoutMs) {
+		return new Promise((resolve) => {
+			const deadline = Date.now() + timeoutMs;
+			const tick = () => {
+				try {
+					const canvas = doc.querySelector('[data-page-number="' + pageNo + '"] canvas');
+					if (canvas && canvas.width > 10) { resolve(canvas); return; }
+				}
+				catch (e) { /* ignore */ }
+				if (Date.now() > deadline) { resolve(null); return; }
+				setTimeout(tick, 200);
+			};
+			tick();
+		});
+	}
+
+	function downscaleCanvas(canvas, maxWidth, quality) {
+		try {
+			const scale = Math.min(1, maxWidth / canvas.width);
+			const w = Math.max(1, Math.round(canvas.width * scale));
+			const h = Math.max(1, Math.round(canvas.height * scale));
+			const off = canvas.ownerDocument.createElement("canvas");
+			off.width = w;
+			off.height = h;
+			off.getContext("2d").drawImage(canvas, 0, 0, w, h);
+			return off.toDataURL("image/jpeg", quality);
+		}
+		catch (e) {
+			return null;
+		}
+	}
+
+	/**
+	 * 把论文前 N 页渲染成 JPEG dataURL。
+	 * 需要阅读器已经打开；会临时翻页，结束后恢复到原来的页。
+	 */
+	async function capturePageImages(item, maxPages) {
+		const reader = findReaderForPaper(item);
+		if (!reader) return [];
+
+		let win = null;
+		try {
+			win = reader._iframeWindow && (reader._iframeWindow.wrappedJSObject || reader._iframeWindow);
+		}
+		catch (e) {
+			return [];
+		}
+		if (!win || !win.document) return [];
+
+		const doc = win.document;
+		let restorePage = null;
+		try { restorePage = reader.state && reader.state.pageIndex; } catch (e) { /* ignore */ }
+
+		const images = [];
+		for (let i = 0; i < maxPages; i++) {
+			try {
+				await reader.navigate({ pageIndex: i });
+				const canvas = await waitForPageCanvas(doc, i + 1, 2500);
+				if (!canvas) continue;
+				const url = downscaleCanvas(canvas, 1000, 0.65);
+				if (url) images.push(url);
+			}
+			catch (e) { /* 跳过这一页 */ }
+		}
+
+		if (restorePage != null) {
+			try { await reader.navigate({ pageIndex: restorePage }); } catch (e) { /* ignore */ }
+		}
+		return images;
 	}
 
 	// ------------------------------------------------------------ 原文高亮

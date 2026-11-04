@@ -152,6 +152,22 @@
 		<div class="desc">单篇论文最多送入多少字符。越大越完整，但更慢更贵。</div>
 
 		<div class="row">
+			<label for="pageImages">发送页面截图</label>
+			<input type="checkbox" id="pageImages" />
+			<span class="unit">让模型"看到"公式与图表</span>
+		</div>
+
+		<div class="row">
+			<label for="pageImageMax">最多截图页数</label>
+			<input type="number" id="pageImageMax" min="1" max="20" step="1" style="max-width:100px" />
+		</div>
+		<div class="desc">
+			开启后会把 PDF 前 N 页渲染为图片随文本一起发送。需要模型支持图像输入
+			（例如 deepseek-flash）；不支持的接口会自动退回纯文本，并在回答上方提示。
+			截图会临时翻页，完成后自动回到原来页。
+		</div>
+
+		<div class="row">
 			<label for="temperature">temperature</label>
 			<input type="text" id="temperature" style="max-width:120px" />
 			<span class="unit">0–2，问答建议 0.2–0.5</span>
