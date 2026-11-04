@@ -1,7 +1,7 @@
 {
 	"manifest_version": 2,
 	"name": "PaperLoom (文脉)",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"description": "会记得你、也会记得你整个文献库的 Zotero 研究助手：对话 → 记忆/图谱 → 回注的闭环。",
 	"homepage_url": "https://github.com/Rsuiyi/Zotero_PaperLoom",
 	"author": "PaperLoom Team",

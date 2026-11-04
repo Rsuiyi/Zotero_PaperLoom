@@ -499,12 +499,25 @@ function makeReaderButton(doc) {
 		+ "align-items:center;justify-content:center;border:1px solid #c9c9c9;border-radius:6px;"
 		+ "background:#fff;cursor:pointer;";
 
-	// 图标按钮：和阅读器其它工具按钮一致的观感
-	const img = doc.createElement("img");
-	img.src = "chrome://paperloom/content/icons/paperloom.svg";
-	img.alt = "PaperLoom";
-	img.style.cssText = "width:16px;height:16px;display:block;pointer-events:none;";
-	btn.appendChild(img);
+	// 内联 SVG，避免 chrome:// 资源在 reader iframe 里加载失败露出 alt 文本
+	const SVG_NS = "http://www.w3.org/2000/svg";
+	const svg = doc.createElementNS(SVG_NS, "svg");
+	svg.setAttribute("viewBox", "0 0 24 24");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("fill", "none");
+	svg.setAttribute("stroke", "#2e7fe0");
+	svg.setAttribute("stroke-width", "1.8");
+	svg.setAttribute("stroke-linecap", "round");
+	svg.setAttribute("stroke-linejoin", "round");
+	svg.style.cssText = "display:block;pointer-events:none;";
+	svg.innerHTML = '<circle cx="5" cy="6" r="2.2"></circle>'
+		+ '<circle cx="19" cy="7" r="2.2"></circle>'
+		+ '<circle cx="12" cy="13" r="2.6"></circle>'
+		+ '<circle cx="6" cy="19" r="2.2"></circle>'
+		+ '<circle cx="18" cy="18" r="2.2"></circle>'
+		+ '<path d="M6.9 7.4 10 11.3M17 8.6 13.9 11.6M10.3 15 7.6 17.3M14 14.6l2.4 2"></path>';
+	btn.appendChild(svg);
 
 	btn.addEventListener("click", () => toggleDock(Zotero.getMainWindow()));
 	return btn;
