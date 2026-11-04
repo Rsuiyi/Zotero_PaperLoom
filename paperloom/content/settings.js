@@ -225,12 +225,6 @@
 		setStatus("已删除服务商", "ok");
 	}
 
-	/**
-	 * 记录窗口几何。
-	 * 我们看不到用户的屏幕，只能靠这份数据判断：
-	 * 窗口到底在哪、屏幕可用区域多大、打开后有没有被系统移动。
-	 * 结果同时写进页面顶部和 <数据目录>/paperloom/windowlog.json。
-	 */
 	/** 打开后再手动居中：centerscreen 在多屏/某些 WM 上不生效 */
 	function openProviderDialog(providerId) {
 		const url = "chrome://paperloom/content/provider.xhtml"

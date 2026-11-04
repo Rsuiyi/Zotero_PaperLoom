@@ -117,6 +117,16 @@
 		applyFont(currentFont());
 		refreshStats();
 		window.setInterval(refreshStats, 5000);
+
+		// 设置里改了字号：这里每 2 秒同步一次，不用重开面板
+		let appliedFont = currentFont();
+		window.setInterval(() => {
+			const f = currentFont();
+			if (f !== appliedFont) {
+				appliedFont = f;
+				document.body.style.zoom = String(f / 13);
+			}
+		}, 2000);
 		window.addEventListener("focus", refreshStats);
 	}
 
@@ -200,12 +210,14 @@
 	async function restoreHistory() {
 		if (!PL || !PL.Pipeline || !PL.Pipeline.recentTurns) return;
 
-		const key = currentItem ? currentItem.key : "__library__";
+		// 与提问上下文保持一致：正在看 PDF 时，恢复的是这篇论文的历史
+		const target = mode === "library" ? null : (activePaperItem() || currentItem);
+		const key = target ? target.key : "__library__";
 		if (historyKey === key) return;
 		historyKey = key;
 
 		try {
-			const turns = await PL.Pipeline.recentTurns(currentItem ? currentItem.key : null, 20);
+			const turns = await PL.Pipeline.recentTurns(target ? target.key : null, 20);
 			els.messages.innerHTML = "";
 			if (!turns || !turns.length) {
 				renderIntro(mode === "library"
@@ -885,8 +897,16 @@
 			.replace(/[\s ]+/g, "")
 			.replace(/[^\p{L}\p{N}]+/gu, "");
 
-		const key = squash(quote);
-		if (!key) return false;
+		// 句级优先：引文的第一句能命中就只涂这一句，整段引文不再整段高亮
+		const original = String(quote || "").trim();
+		const firstSentence = (original.match(/^[\s\S]{8,}?[.!?。！？](?=[\s"'”’)\]]|$)/) || [original])[0];
+
+		const fullKey = squash(original);
+		const sentKey = squash(firstSentence);
+		const keys = [];
+		if (sentKey.length >= 10) keys.push(sentKey);
+		if (fullKey.length >= 14 && fullKey !== sentKey) keys.push(fullKey);
+		if (!keys.length) return false;
 
 		for (const doc of docs) {
 			const layers = Array.from(doc.querySelectorAll(".textLayer"));
@@ -915,14 +935,17 @@
 				}
 				if (!full) continue;
 
-				// 从长到短试前缀，排版差异越大越可能只能靠短片段命中
-				let from = -1;
-				for (const size of [40, 30, 20, 12]) {
-					if (key.length < size) continue;
-					const idx = full.indexOf(key.slice(0, size));
-					if (idx >= 0) { from = idx; break; }
+				// 先试第一句，再退到整段；每种都从长到短试前缀
+				let hit = null;
+				for (const key of keys) {
+					for (const size of [40, 30, 20, 12]) {
+						if (key.length < size) continue;
+						const idx = full.indexOf(key.slice(0, size));
+						if (idx >= 0) { hit = { from: idx, len: key.length }; break; }
+					}
+					if (hit) break;
 				}
-				if (from < 0) continue;
+				if (!hit) continue;
 
 				for (const el of doc.querySelectorAll(".paperloom-hl")) el.classList.remove("paperloom-hl");
 
@@ -933,10 +956,10 @@
 					(doc.head || doc.documentElement).appendChild(style);
 				}
 
-				const to = from + Math.min(key.length, 80);
+				const to = hit.from + hit.len;
 				let first = null;
 				for (const r of ranges) {
-					if (r.end <= from || r.start >= to) continue;
+					if (r.end <= hit.from || r.start >= to) continue;
 					r.span.classList.add("paperloom-hl");
 					if (!first) first = r.span;
 				}

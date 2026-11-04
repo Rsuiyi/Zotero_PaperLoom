@@ -17,17 +17,15 @@ PaperLoom.Storage = (function () {
 
 	/** 根目录：优先用偏好里的自定义路径，否则 <Zotero 数据目录>/paperloom */
 	function root() {
-		if (_root) return _root;
+		// 每次都按当前偏好计算：用户改了数据目录后无需重启插件
 		let custom = "";
 		try { custom = Zotero.Prefs.get("extensions.paperloom.dataDir", true) || ""; } catch (e) { /* ignore */ }
-		if (custom) {
-			_root = custom;
-		}
-		else {
-			// 数据目录由 Compat 解析：不同 Zotero 版本取到的位置不同，但业务层不用关心
-			const base = PaperLoom.Compat.dataDir() || ".";
-			_root = PathUtils.join(base, "paperloom");
-		}
+
+		const desired = custom
+			? custom
+			: PathUtils.join(PaperLoom.Compat.dataDir() || ".", "paperloom");
+
+		_root = desired;
 		return _root;
 	}
 
