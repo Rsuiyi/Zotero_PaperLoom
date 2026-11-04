@@ -494,17 +494,27 @@ PaperLoom.Pipeline = (function () {
 		const nodes = [];
 		const edges = [];
 
+		// 本轮涉及的论文 id（focus 论文）作为新概念的默认来源，
+		// 防止 LLM 漏填 paperIds 时概念丢失来源 —— 与 rebuildGraph 的兜底对齐。
+		const defaultPaperIds = (ctx && ctx.focusDocs || []).map(d => String(d.paperId));
+
 		for (const doc of ctx.focusDocs || []) {
 			nodes.push({ type: "paper", paperId: doc.paperId, label: doc.title || doc.paperId });
 		}
 		for (const n of (raw && raw.nodes) || []) {
 			if (!n || (!n.label && !n.nodeId)) continue;
+			const type = n.type === "paper" ? "paper" : (n.type === "claim" ? "claim" : "concept");
+			let paperIds = (n.paperIds || []).map(String);
+			// 概念没带来源时，兜底归属到本轮 focus 论文
+			if (type === "concept" && !paperIds.length && defaultPaperIds.length) {
+				paperIds = defaultPaperIds.slice();
+			}
 			nodes.push({
-				type: n.type === "paper" ? "paper" : (n.type === "claim" ? "claim" : "concept"),
+				type: type,
 				nodeId: n.nodeId,                       // 模型复用已有节点时带回来
 				label: String(n.label || n.nodeId).slice(0, 80),
 				aliases: n.aliases || [],
-				paperIds: n.paperIds || []
+				paperIds: paperIds
 			});
 		}
 		for (const e of (raw && raw.edges) || []) {

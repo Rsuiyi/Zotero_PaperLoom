@@ -289,6 +289,40 @@ textarea {
 	font-style: italic;
 }
 
+/* 来源论文清单：一条概念来自哪些论文 */
+.pl-source-paper {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 0;
+	font-size: 12px;
+}
+
+.pl-source-dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	flex: none;
+}
+
+.pl-source-name {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pl-source-jump {
+	flex: none;
+	font-size: 11px;
+	padding: 1px 7px;
+}
+
+.pl-source-quote {
+	margin: 2px 0 6px 15px;
+	font-size: 11px;
+}
+
 .pl-legend {
 	display: flex;
 	gap: 10px;
